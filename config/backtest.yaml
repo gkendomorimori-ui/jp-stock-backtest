@@ -1,0 +1,44 @@
+# Common backtest settings.
+# Values marked "TODO" are placeholders and have NOT been decided yet.
+# Replace them before running a real backtest.
+
+capital:
+  initial_capital: null        # TODO: decide (JPY). e.g. 1_000_000 -- not decided
+
+costs:
+  commission:
+    # TODO: decide model and values based on the broker assumed.
+    model: rate                # "rate" (fraction of traded value) or "fixed" (JPY per order)
+    rate: null                 # TODO: e.g. 0.0 -- not decided
+    fixed: null                # TODO: used only when model == fixed
+    minimum: null              # TODO: minimum commission per order (JPY), optional
+  slippage:
+    # TODO: decide. Applied adversely on both entry and exit.
+    model: rate                # "rate" (fraction of price) or "ticks"
+    rate: null                 # TODO: not decided
+    ticks: null                # TODO: used only when model == ticks
+
+period:
+  start_date: null             # TODO: YYYY-MM-DD
+  end_date: null               # TODO: YYYY-MM-DD
+  # Preset lengths for convenience (e.g. 2y / 5y ending at end_date). Optional.
+  preset: null                 # TODO: "2y" | "5y" | null
+
+position:
+  maximum_positions: null      # TODO: default max concurrent positions (strategy spec may override)
+  lot_size: null               # TODO: 100 (unit share) or 1 -- not decided
+
+execution:
+  signal_timing: close_of_day_t   # fixed rule (docs/BACKTEST_RULES.md)
+  execution_lag_days: 1           # fixed rule: T+1
+  execution_price: null           # TODO: "open" | "close" -- defined per strategy spec
+
+evaluation:
+  trading_days_per_year: null  # TODO: e.g. 245 or 252 -- not decided
+  risk_free_rate: null         # TODO: annual rate used for Sharpe/Sortino -- not decided
+
+reproducibility:
+  random_seed: null            # set if any randomness is used
+
+output:
+  results_dir: results/runs

@@ -1,0 +1,41 @@
+# --- Data (do not commit raw / processed market data) ---
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# --- Backtest results (per-run outputs are large; comparison summaries are tracked) ---
+results/runs/*
+!results/runs/.gitkeep
+
+# --- Python cache / build ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+
+# --- IDE / OS temporary files ---
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

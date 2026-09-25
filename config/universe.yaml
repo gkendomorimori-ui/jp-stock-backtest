@@ -1,0 +1,28 @@
+# Target market / symbols.
+# Values marked "TODO" are placeholders and have NOT been decided yet.
+
+universe:
+  name: null                   # TODO: identifier saved into run metadata (e.g. "prime_top100")
+
+  # How to build the universe. One of:
+  #   "list"   -> use `symbols` below as-is
+  #   "market" -> use all symbols in `markets` filtered by `filters`
+  #   "index"  -> constituents of `index` (requires point-in-time data to avoid survivorship bias)
+  mode: list
+
+  markets: []                  # TODO: e.g. ["TSE_PRIME", "TSE_STANDARD", "TSE_GROWTH"]
+  index: null                  # TODO: e.g. "TOPIX" / "NIKKEI225"
+
+  symbols: []                  # TODO: e.g. ["7203", "6758"] -- not decided
+
+  filters:
+    min_price: null            # TODO
+    min_avg_turnover: null     # TODO: average daily traded value (JPY)
+    min_listing_days: null     # TODO
+    exclude_symbols: []
+
+  survivorship:
+    include_delisted: null     # TODO: true/false -- depends on data source availability
+
+benchmark:
+  symbol: null                 # TODO: e.g. TOPIX ETF (1306) -- not decided
