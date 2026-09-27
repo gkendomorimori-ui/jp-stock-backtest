@@ -1,0 +1,13 @@
+# Parameters for strategies/high_price_breakout.md (v0.1.0).
+# Code must read these values; do not hard-code them.
+
+name: high_price_breakout
+version: 0.1.0
+
+parameters:
+  lookback_days: 20            # window T-20 .. T-1 (signal day T excluded)
+  volume_multiplier: 2.0       # volume[T] >= 2.0 x mean(volume[T-20..T-1])
+  max_position_pct: 0.20       # total payment per position <= 20% of equity at T close
+  take_profit_pct: 0.10        # +10% from entry price
+  stop_loss_pct: 0.05          # -5% from entry price
+  max_holding_days: 20         # entry day = day 1; sell at the close of day 20

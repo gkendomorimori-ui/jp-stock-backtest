@@ -28,6 +28,7 @@ class BacktestConfig:
     end_date: date | None = None
     maximum_positions: int | None = None
     lot_size: int | None = None
+    long_only: bool = True
     execution_lag_days: int = 1
     execution_price: str | None = None
     trading_days_per_year: int | None = None
@@ -62,6 +63,7 @@ class BacktestConfig:
             end_date=_to_date(period.get("end_date")),
             maximum_positions=position.get("maximum_positions"),
             lot_size=position.get("lot_size"),
+            long_only=position.get("long_only", True),
             execution_lag_days=execution.get("execution_lag_days", 1),
             execution_price=execution.get("execution_price"),
             trading_days_per_year=evaluation.get("trading_days_per_year"),
@@ -74,6 +76,8 @@ class BacktestConfig:
         """Return names of settings that must be decided before a real run."""
         required = [
             "initial_capital",
+            "maximum_positions",
+            "lot_size",
             "start_date",
             "end_date",
             "trading_days_per_year",

@@ -1,44 +1,43 @@
-# Common backtest settings.
-# Values marked "TODO" are placeholders and have NOT been decided yet.
-# Replace them before running a real backtest.
+# Common backtest settings (applies to every strategy unless its spec overrides it).
+# Values marked "TODO" are NOT decided yet. Everything else is decided (2026-09-27).
 
 capital:
-  initial_capital: null        # TODO: decide (JPY). e.g. 1_000_000 -- not decided
+  initial_capital: 1500000     # JPY
 
 costs:
   commission:
-    # TODO: decide model and values based on the broker assumed.
-    model: rate                # "rate" (fraction of traded value) or "fixed" (JPY per order)
-    rate: null                 # TODO: e.g. 0.0 -- not decided
-    fixed: null                # TODO: used only when model == fixed
-    minimum: null              # TODO: minimum commission per order (JPY), optional
+    model: rate                # fraction of traded value, applied to every buy and every sell
+    rate: 0.0005               # 0.05% of traded value
+    fixed: null                # unused (model == rate)
+    minimum: 0                 # no minimum commission
   slippage:
-    # TODO: decide. Applied adversely on both entry and exit.
-    model: rate                # "rate" (fraction of price) or "ticks"
-    rate: null                 # TODO: not decided
-    ticks: null                # TODO: used only when model == ticks
+    model: rate                # adverse move: buy fills higher, sell fills lower
+    rate: 0.001                # 0.10% per side (entry and exit separately)
+    ticks: null                # unused (model == rate)
 
 period:
+  # TODO: fix after data is downloaded (J-Quants Light plan or above is needed for 5 years).
+  # A 20-trading-day warm-up must exist BEFORE start_date (signals need 20 prior days).
   start_date: null             # TODO: YYYY-MM-DD
   end_date: null               # TODO: YYYY-MM-DD
-  # Preset lengths for convenience (e.g. 2y / 5y ending at end_date). Optional.
-  preset: null                 # TODO: "2y" | "5y" | null
+  preset: 5y                   # intended length: past 5 years of daily data
 
 position:
-  maximum_positions: null      # TODO: default max concurrent positions (strategy spec may override)
-  lot_size: null               # TODO: 100 (unit share) or 1 -- not decided
+  maximum_positions: 5         # max concurrent positions (all strategies)
+  lot_size: 100                # trading unit (shares)
+  long_only: true              # cash (spot) buys only; no short selling, no margin
 
 execution:
   signal_timing: close_of_day_t   # fixed rule (docs/BACKTEST_RULES.md)
-  execution_lag_days: 1           # fixed rule: T+1
-  execution_price: null           # TODO: "open" | "close" -- defined per strategy spec
+  execution_lag_days: 1           # fixed rule: orders created at T close execute from T+1
+  execution_price: open           # default entry price: T+1 open (strategy spec may define exits)
 
 evaluation:
-  trading_days_per_year: null  # TODO: e.g. 245 or 252 -- not decided
-  risk_free_rate: null         # TODO: annual rate used for Sharpe/Sortino -- not decided
+  trading_days_per_year: 252
+  risk_free_rate: 0.0
 
 reproducibility:
-  random_seed: null            # set if any randomness is used
+  random_seed: null            # no randomness used so far
 
 output:
   results_dir: results/runs

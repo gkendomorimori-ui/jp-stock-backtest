@@ -1,28 +1,58 @@
 # Target market / symbols.
-# Values marked "TODO" are placeholders and have NOT been decided yet.
+# The universe is built point-in-time: on each signal day T only securities that are
+# listed on T (per /v2/equities/master?date=T) and pass the filters below are eligible.
 
 universe:
-  name: null                   # TODO: identifier saved into run metadata (e.g. "prime_top100")
+  name: tse_all_markets_liquid_100m
 
-  # How to build the universe. One of:
-  #   "list"   -> use `symbols` below as-is
-  #   "market" -> use all symbols in `markets` filtered by `filters`
-  #   "index"  -> constituents of `index` (requires point-in-time data to avoid survivorship bias)
-  mode: list
+  mode: market                 # use all securities in `markets`, then apply `filters`
 
-  markets: []                  # TODO: e.g. ["TSE_PRIME", "TSE_STANDARD", "TSE_GROWTH"]
-  index: null                  # TODO: e.g. "TOPIX" / "NIKKEI225"
+  # J-Quants market codes (Mkt). Verified against the J-Quants spec on 2026-09-27.
+  # The Prime/Standard/Growth segments only exist from 2022-04-04, so the legacy
+  # segments are included for dates before that.
+  markets:
+    current:
+      - {code: "0111", name: プライム}
+      - {code: "0112", name: スタンダード}
+      - {code: "0113", name: グロース}
+    legacy:                    # before 2022-04-04
+      - {code: "0101", name: 東証一部}
+      - {code: "0102", name: 東証二部}
+      - {code: "0104", name: マザーズ}
+      - {code: "0106", name: JASDAQ スタンダード}
+      - {code: "0107", name: JASDAQ グロース}
+    excluded:                  # never included
+      - {code: "0105", name: TOKYO PRO MARKET}
+      - {code: "0109", name: その他}
 
-  symbols: []                  # TODO: e.g. ["7203", "6758"] -- not decided
+  # Securities to exclude even if listed in the markets above.
+  exclude_product_types:
+    - etf
+    - etn
+    - reit                     # incl. infrastructure funds
+    - preferred_share
+  # TODO: map these to concrete J-Quants field values (e.g. ProdCat) at the first
+  # connection check, and record the mapping in docs/DATA_SOURCES.md.
+
+  index: null                  # unused (mode == market)
+  symbols: []                  # unused (mode == market)
 
   filters:
-    min_price: null            # TODO
-    min_avg_turnover: null     # TODO: average daily traded value (JPY)
-    min_listing_days: null     # TODO
+    min_price: null            # no price filter
+    # Liquidity: average daily turnover (J-Quants field `Va`, unadjusted JPY value) over the
+    # 20 trading days T-20 .. T-1 (excluding signal day T) must be >= 100,000,000 JPY.
+    min_avg_turnover: 100000000
+    turnover_window_days: 20
+    turnover_window_includes_signal_day: false
+    # A security needs 20 valid trading days before T; otherwise it is excluded on T.
+    min_history_days: 20
     exclude_symbols: []
 
   survivorship:
-    include_delisted: null     # TODO: true/false -- depends on data source availability
+    # J-Quants returns delisted securities for dates when they were listed, so delisted
+    # securities are included. TODO: confirm at the first connection check. If this turns
+    # out to be impossible, set false and state the limitation in README.md.
+    include_delisted: true
 
 benchmark:
-  symbol: null                 # TODO: e.g. TOPIX ETF (1306) -- not decided
+  symbol: null                 # TODO: not decided (e.g. TOPIX)

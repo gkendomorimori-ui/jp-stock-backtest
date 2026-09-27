@@ -5,7 +5,7 @@
 「最も利益が出た戦略」を探すのではなく、**実運用可能性と再現性** を重視します。
 リターンに加えて、ドローダウン・リスク・年ごとの安定性・銘柄依存性・相場環境依存性・パラメータ依存性を比較します。
 
-> 現在のステータス：**骨格のみ**。データ取得・具体的な戦略・本格的なバックテストエンジンは未実装です。
+> 現在のステータス：**骨格＋初期仕様**。共通設定・Universe・最初の戦略（[high_price_breakout](strategies/high_price_breakout.md)）の仕様は確定済み。データ取得・戦略・バックテストエンジンは未実装です。
 
 ---
 
@@ -103,6 +103,56 @@ ruff check .    # lint
 ruff format .   # format
 mypy src        # 型チェック
 ```
+
+## データ（J-Quants API V2）
+
+株価データは J-Quants API V2 から取得する想定です（詳細は [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)）。
+
+- API キーと取得したデータは **Git に含めません**（`.env`、`data/raw/`、`data/processed/` は `.gitignore` 済み）
+- 過去5年の日足を使うには **Light プラン以上**が必要です。Free プランは約2年分で、12週間遅れです
+
+### API キーの設定
+
+1. J-Quants のダッシュボードで API キーを発行する
+2. `.env.example` をコピーして `.env` を作り、キーを書く
+
+```powershell
+Copy-Item .env.example .env
+notepad .env        # JQUANTS_API_KEY=発行したキー
+```
+
+### 少量データでの接続確認（PowerShell）
+
+データ取得スクリプトはまだ実装されていません。以下のコマンドで、API キーと接続だけを確認できます。1回あたり数件のリクエストで、Free プランでも実行できます。
+
+```powershell
+# .env からキーを読み込む
+$key = (Get-Content .env | Where-Object { $_ -match '^JQUANTS_API_KEY=' }) -replace '^JQUANTS_API_KEY=', ''
+$h = @{ "x-api-key" = $key }
+
+# 1) 日足：トヨタ（72030）の数日分
+#    Free プランは12週間より前のデータしか取れないので、日付はそれより前にする
+$r = Invoke-RestMethod -Headers $h -Uri "https://api.jquants.com/v2/equities/bars/daily?code=72030&from=2026-06-01&to=2026-06-10"
+$r.data | Select-Object Date, Code, O, H, L, C, Vo, Va, AdjC, AdjFactor | Format-Table
+
+# 2) 銘柄マスタ：ある日付時点の上場銘柄と市場区分
+$m = Invoke-RestMethod -Headers $h -Uri "https://api.jquants.com/v2/equities/master?date=2026-06-01"
+$m.data.Count
+$m.data | Group-Object MktNm | Select-Object Name, Count
+```
+
+確認するポイント：
+
+- 日足で四本値（`O` `H` `L` `C`）、出来高 `Vo`、売買代金 `Va`、調整後終値 `AdjC` が返ってくる
+- 銘柄マスタで市場区分ごとの件数が返ってくる
+- エラーが `401` / `403` の場合は、API キーかプランを確認する
+
+### 上場廃止銘柄（Survivorship bias）について
+
+J-Quants は、上場廃止銘柄についても上場していた期間のデータを返す仕様です。そのためバックテストでは、**各日時点で上場していた銘柄を対象にする（上場廃止銘柄も含める）**方針です。
+
+- **現時点では、実データで確認できていません。** 最初のデータ取得時に確認します
+- 確認できなかった場合、または取得できない期間がある場合は、**バックテスト結果が生き残った銘柄に偏る（成績が良く出やすい）制約**として、この README と各結果の `summary.json` に明記します
 
 ## 出力形式
 
