@@ -1,6 +1,6 @@
 # high_price_breakout
 
-> 状態：**仕様確定（v0.2.0）／未実装**
+> 状態：**仕様確定（v0.2.0）／実装済み**（`src/strategies/high_price_breakout.py`、`src/backtest/engine.py`。実データでの動作確認前）
 > 未確定・未対応の事項は末尾の「未対応事項」にまとめる。実装時は `TODO(spec):` で明示する。
 > 全戦略共通のルール（データ欠損・上場廃止・期間分割・ベンチマーク）は [docs/BACKTEST_RULES.md](../docs/BACKTEST_RULES.md) に従う。
 

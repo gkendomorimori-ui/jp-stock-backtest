@@ -83,7 +83,7 @@ Execution at Day T+1
 - `trades.csv` — 取引履歴
 - `equity_curve.csv` — 日次の資産推移
 
-を保存する。`status = needs_review` の場合は `unresolved_events.csv` も保存する。
+を保存する。あわせて `orders.csv`（買い注文と約定・取消の結果）を保存する。`status = needs_review` の場合は `unresolved_events.csv` も保存する。
 
 ### trades.csv（暫定カラム）
 
@@ -99,7 +99,8 @@ Execution at Day T+1
 | commission | 往復手数料 |
 | pnl | 損益（コスト控除後） |
 | return_pct | 損益率 |
-| exit_reason | signal / stop_loss / take_profit / end_of_test など |
+| exit_reason | stop_loss_open / take_profit_open / stop_loss / take_profit / time_exit / end_of_test |
+| holding_days | 保有営業日数（購入日を1日目とする） |
 
 ### equity_curve.csv（暫定カラム）
 
@@ -108,7 +109,9 @@ Execution at Day T+1
 | date | 日付 |
 | equity | 評価額合計 |
 | cash | 現金 |
-| position_value | ポジション評価額 |
+| position_value | ポジション評価額（実際の終値 × 実際の株数。売買不成立の日は直前の有効な終値） |
+| positions | 保有銘柄数 |
+| benchmark_equity | ベンチマークの資産換算値（未取得なら空欄） |
 
 ## 評価指標
 
