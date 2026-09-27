@@ -46,6 +46,21 @@ def make_data(
     optionally ``adj_factor``, ``turnover`` and ``listed`` (bool). ``None`` = no trade.
     Turnover defaults to close x volume.
     """
+    bar_rows, master_rows = raw_rows(days, series, market=market, prodcat=prodcat)
+    calendar = pd.DataFrame({"date": pd.to_datetime(days), "hol_div": "1", "is_trading_day": True})
+    return ProcessedData(
+        bars=bars_from_rows(bar_rows), master=master_from_rows(master_rows), calendar=calendar
+    )
+
+
+def raw_rows(
+    days: list[date],
+    series: dict[str, dict[str, list[Any]]],
+    *,
+    market: dict[str, str] | None = None,
+    prodcat: dict[str, str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """J-Quants-shaped (bar rows, master rows) for :func:`make_data`."""
     market = market or {}
     prodcat = prodcat or {}
     bar_rows: list[dict[str, Any]] = []
@@ -83,10 +98,7 @@ def make_data(
                     "ProdCat": prodcat.get(sym, "011"),
                 }
             )
-    calendar = pd.DataFrame({"date": pd.to_datetime(days), "hol_div": "1", "is_trading_day": True})
-    return ProcessedData(
-        bars=bars_from_rows(bar_rows), master=master_from_rows(master_rows), calendar=calendar
-    )
+    return bar_rows, master_rows
 
 
 def make_md(days: list[date], series: dict[str, dict[str, list[Any]]], **kw: Any) -> MarketData:

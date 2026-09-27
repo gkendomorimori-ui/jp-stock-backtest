@@ -1,7 +1,7 @@
-"""Backtest layer: configuration, cost model and engine interface."""
+"""Backtest layer: configuration, cost model and engine."""
 
 from src.backtest.config import BacktestConfig
 from src.backtest.costs import CostModel
-from src.backtest.engine import BacktestEngine, BacktestResult
+from src.backtest.engine import BacktestEngine, EngineResult, ExecutionParams
 
-__all__ = ["BacktestConfig", "BacktestEngine", "BacktestResult", "CostModel"]
+__all__ = ["BacktestConfig", "BacktestEngine", "CostModel", "EngineResult", "ExecutionParams"]

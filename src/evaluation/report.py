@@ -78,11 +78,15 @@ def save_run(
     trades: pd.DataFrame,
     equity_curve: pd.DataFrame,
     unresolved_events: pd.DataFrame | None = None,
+    extra_sections: dict[str, Any] | None = None,
+    extra_tables: dict[str, pd.DataFrame] | None = None,
 ) -> Path:
     """Write ``summary.json``, ``trades.csv`` and ``equity_curve.csv`` to ``out_dir``.
 
     If ``unresolved_events`` is non-empty, it is written to ``unresolved_events.csv`` and
     ``metadata.status`` must be ``needs_review``; the summary then marks metrics as not final.
+    ``extra_sections`` are added to ``summary.json`` as top-level keys and
+    ``extra_tables`` are written as ``<name>.csv``.
 
     Returns:
         The output directory.
@@ -100,6 +104,10 @@ def save_run(
         "metrics_final": metadata.status == "complete",
         "metrics": _json_safe(metrics),
     }
+    for key, value in (extra_sections or {}).items():
+        if key in summary:
+            raise ValueError(f"extra section {key!r} clashes with a built-in key")
+        summary[key] = _json_safe({key: value})[key]
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -108,17 +116,23 @@ def save_run(
     if has_unresolved:
         assert unresolved_events is not None
         unresolved_events.to_csv(out_dir / "unresolved_events.csv", index=False)
+    for name, table in (extra_tables or {}).items():
+        table.to_csv(out_dir / f"{name}.csv", index=False)
     return out_dir
 
 
 def _json_safe(values: dict[str, Any]) -> dict[str, Any]:
-    """Replace NaN/inf (invalid in strict JSON) with None / string markers."""
-    out: dict[str, Any] = {}
-    for key, value in values.items():
-        if isinstance(value, float) and math.isnan(value):
-            out[key] = None
-        elif isinstance(value, float) and math.isinf(value):
-            out[key] = "inf" if value > 0 else "-inf"
-        else:
-            out[key] = value
-    return out
+    """Recursively replace NaN/inf (invalid in strict JSON) with None / string markers."""
+    return {key: _safe_value(value) for key, value in values.items()}
+
+
+def _safe_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _safe_value(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_safe_value(v) for v in value]
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if isinstance(value, float) and math.isinf(value):
+        return "inf" if value > 0 else "-inf"
+    return value
