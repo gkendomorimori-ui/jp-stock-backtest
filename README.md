@@ -175,6 +175,8 @@ python scripts/verify_run.py                # 保存された結果の整合性�
 - **成功条件**：取得・加工・実行・保存がエラーなく完了すること。**利益の大小は成功条件にしません**。結果を見て戦略のパラメータを変えることもしません
 - 結果は `run_type: smoke_test` として保存され、正式な評価とは区別されます。TOPIX は Free プランでは取れないので、ベンチマークの数値は `null` で、未取得の理由が別の項目に記録されます
 
+動作確認の記録：[docs/smoke_tests/](docs/smoke_tests/)（最新：[2026-09-28 high_price_breakout Free プラン](docs/smoke_tests/2026-09-28_high_price_breakout_free_plan.md)）
+
 出力されるファイル（`results/runs/<run_id>/`）：
 
 | ファイル | 内容 |
