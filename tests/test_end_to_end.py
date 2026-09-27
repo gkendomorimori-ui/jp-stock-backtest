@@ -158,3 +158,23 @@ def test_warmup_shorter_than_window_is_rejected(tmp_path: Path) -> None:
             run_type="smoke_test",
             results_root=tmp_path,
         )
+
+
+def test_verify_run_passes_on_hand_checked_run(run_dir: Path) -> None:
+    from src.evaluation.verify import verify_run
+
+    checks, info = verify_run(run_dir)
+    failed = [c for c in checks if not c.ok]
+    assert not failed, failed
+    assert info["exit_reasons"] == {"take_profit": 1, "end_of_test": 1}
+
+
+def test_verify_run_detects_inconsistency(run_dir: Path) -> None:
+    from src.evaluation.verify import verify_run
+
+    eq = pd.read_csv(run_dir / "equity_curve.csv")
+    eq.loc[3, "cash"] -= 1000  # break equity = cash + positions
+    eq.to_csv(run_dir / "equity_curve.csv", index=False)
+    checks, _ = verify_run(run_dir)
+    bad = {c.name for c in checks if not c.ok}
+    assert "equity = cash + position value (every day)" in bad

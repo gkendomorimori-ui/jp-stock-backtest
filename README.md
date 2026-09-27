@@ -168,6 +168,7 @@ Free プランで取得できる**最新日までの約3か月**を評価期間�
 python scripts/download_data.py --smoke     # 取得（約170リクエスト、40分前後。中断しても同じコマンドで再開）
 python scripts/process_data.py --smoke      # 加工（data/processed/jquants/）
 python scripts/run_backtest.py --smoke      # 実行（results/runs/<run_id>/）
+python scripts/verify_run.py                # 保存された結果の整合性チェック（利益の良し悪しは見ない）
 ```
 
 - 期間は最初の実行時に決まり、`data/raw/jquants/smoke_period.json` に保存されます。再開しても期間は変わりません（決め直すときは `--redetermine`）
