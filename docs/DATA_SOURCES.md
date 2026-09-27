@@ -38,6 +38,8 @@ Backtest Engine
 | 認証 | ダッシュボードで発行した API キーを `x-api-key` ヘッダで送る（V1 のトークン方式は使わない） |
 | 日足 | `GET /v2/equities/bars/daily`（`code` または `date` が必須。`from` / `to` で期間指定） |
 | 銘柄マスタ | `GET /v2/equities/master`（`date` を指定すると、その日時点の上場銘柄を返す） |
+| 取引カレンダー | `GET /v2/markets/calendar`（`HolDiv`：0 非営業日 / 1 営業日 / 2 東証半日立会 / 3 非営業日（祝日取引あり））。東証の営業日は 1 と 2 |
+| TOPIX | `GET /v2/indices/bars/daily/topix`（`O` `H` `L` `C`。データがない日はレコード自体が返らない） |
 | ページング | レスポンスの `pagination_key` を次のリクエストに渡す |
 | レスポンス | `{"data": [...], "pagination_key": ...}` |
 
@@ -70,7 +72,23 @@ Backtest Engine
 | 0105 | TOKYO PRO MARKET | × |
 | 0109 | その他 | × |
 
-TODO：ETF・REIT・優先株を除外するための `ProdCat` などの値は、接続確認のときに確かめてここに記録する。
+商品区分コード（`ProdCat`、公式仕様で確認 2026-09-27）：
+
+| コード | 名称 | 対象 |
+|---|---|---|
+| 011 | 国内株式 | ○（ただし下記の注意） |
+| 012 | 優先出資証券 | × |
+| 013 | REIT | × |
+| 014 | ETF | × |
+| 021 | 外国株式 | × |
+| 022 | 外国REIT | × |
+| 023 | 外国ETF | × |
+| 024 | 外国預託証券 | × |
+
+- 公式仕様によると、`011`（国内株式）には**普通株と優先株の両方**が含まれる。`ProdCat` だけでは普通株を取り出せない
+- 方針：普通株だと確定できないものは、**推測で普通株に含めない**（`unclassified_policy: exclude`）
+- `scripts/check_jquants_connection.py` は、仮の判定として「`ProdCat = 011` かつ5桁コードの末尾が `0`」を普通株の**候補**とし、それ以外の `011` と未知のコードを**分類保留**として件数と銘柄を表示する。この仮の判定が正しいかは、実データと照合してから確定する
+- TODO：実データと照合した結果（分類保留の件数と中身、最終的な判定ルール）をここに記録する
 
 ### プランごとの制約
 
@@ -109,7 +127,7 @@ long 形式（1 行 = 1 銘柄 × 1 日）とする。
 | 取得可能期間 | 2008-05-07〜。取れる範囲はプランで決まる（Light：5年） | |
 | OHLCV の有無 | あり（売買代金 `Va` もある） | |
 | 調整後株価 | あり（`Adj*`、`AdjFactor`） | |
-| 上場廃止銘柄の有無 | あり（上場していた期間。接続確認で確かめる） | |
+| 上場廃止銘柄の有無 | あり（上場していた期間。既知の上場廃止銘柄で接続確認する） | |
 | API 制限（レート・件数） | 5〜500 リクエスト/分（プラン別）、ページングあり | |
 | 利用条件・ライセンス・費用 | 有料プランあり。個人利用。再配布は不可の想定（規約を確認する） | |
 | データ品質（欠損・誤り・更新遅延） | 取引所（JPX）が提供。無約定の日は null。Free は12週間遅れ | |
@@ -126,9 +144,26 @@ long 形式（1 行 = 1 銘柄 × 1 日）とする。
 - **利用条件**：商用利用可否、再配布可否（リポジトリにデータを含めない前提）
 - **データ品質**：欠損・誤データの頻度、修正履歴
 
+## 接続確認（未実施）
+
+`scripts/check_jquants_connection.py` で、少量のリクエストで以下を確認する（手順は README）。
+
+| 確認項目 | 状態 |
+|---|---|
+| API キーで日足・銘柄マスタ・カレンダー・TOPIX が取得できる | 未確認 |
+| `ProdCat` と市場区分の実データでの件数、分類保留の件数 | 未確認 |
+| 既知の上場廃止銘柄の、上場期間中の銘柄情報と株価が取得できる | 未確認 |
+
+- 現在の銘柄一覧に存在しないことだけで「取得不可」とは判断しない。契約の取得可能期間内に上場廃止となった既知の銘柄を使って確かめる
+- Free プランでの確認は**動作確認**であり、5年分の正式な評価とは区別する
+
 ## 参考
 
 - [J-Quants API Reference：V1 から V2 への変更点](https://jpx-jquants.com/ja/spec/migration-v1-v2)
 - [J-Quants API Reference：日足](https://jpx-jquants.com/ja/spec/eq-bars-daily)
 - [J-Quants API Reference：上場銘柄マスタ](https://jpx-jquants.com/ja/spec/eq-master)
 - [J-Quants API Reference：プランごとの取得期間](https://jpx-jquants.com/ja/spec/data-spec)
+- [J-Quants API Reference：市場区分コード](https://jpx-jquants.com/ja/spec/eq-master/marketcode)
+- [J-Quants API Reference：商品区分コード](https://jpx-jquants.com/ja/spec/eq-master/product-category)
+- [J-Quants API Reference：取引カレンダー](https://jpx-jquants.com/ja/spec/mkt-cal)
+- [J-Quants API Reference：TOPIX](https://jpx-jquants.com/ja/spec/idx-bars-daily-topix)

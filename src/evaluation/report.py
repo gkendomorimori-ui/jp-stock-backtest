@@ -13,6 +13,25 @@ import pandas as pd
 
 from src.utils.git import get_commit_hash
 
+#: Allowed run types (docs/BACKTEST_RULES.md "実行の種類").
+RUN_TYPES: tuple[str, ...] = ("smoke_test", "development", "final_evaluation")
+
+#: Allowed run statuses. ``needs_review`` means results are NOT final.
+RUN_STATUSES: tuple[str, ...] = ("complete", "needs_review")
+
+#: Columns of ``unresolved_events.csv`` (e.g. a held security was delisted and its
+#: settlement could not be determined). See docs/BACKTEST_RULES.md.
+UNRESOLVED_EVENT_COLUMNS: list[str] = [
+    "date",
+    "symbol",
+    "event",
+    "quantity",
+    "entry_price",
+    "last_valid_close",
+    "last_valid_close_date",
+    "reason",
+]
+
 
 @dataclass
 class RunMetadata:
@@ -32,6 +51,18 @@ class RunMetadata:
     git_commit: str | None = field(default_factory=get_commit_hash)
     data_source: str | None = None
     random_seed: int | None = None
+    run_type: str = "smoke_test"
+    status: str = "complete"
+    dividends_included: bool = False
+    benchmark: dict[str, Any] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Validate ``run_type`` and ``status``."""
+        if self.run_type not in RUN_TYPES:
+            raise ValueError(f"run_type must be one of {RUN_TYPES}, got {self.run_type!r}")
+        if self.status not in RUN_STATUSES:
+            raise ValueError(f"status must be one of {RUN_STATUSES}, got {self.status!r}")
 
 
 def make_run_id(strategy_name: str, timestamp: datetime | None = None) -> str:
@@ -46,19 +77,37 @@ def save_run(
     metrics: dict[str, Any],
     trades: pd.DataFrame,
     equity_curve: pd.DataFrame,
+    unresolved_events: pd.DataFrame | None = None,
 ) -> Path:
     """Write ``summary.json``, ``trades.csv`` and ``equity_curve.csv`` to ``out_dir``.
 
+    If ``unresolved_events`` is non-empty, it is written to ``unresolved_events.csv`` and
+    ``metadata.status`` must be ``needs_review``; the summary then marks metrics as not final.
+
     Returns:
         The output directory.
+
+    Raises:
+        ValueError: If unresolved events exist but the status is not ``needs_review``.
     """
+    has_unresolved = unresolved_events is not None and not unresolved_events.empty
+    if has_unresolved and metadata.status != "needs_review":
+        raise ValueError("unresolved events exist; metadata.status must be 'needs_review'")
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    summary = {"metadata": asdict(metadata), "metrics": _json_safe(metrics)}
+    summary = {
+        "metadata": asdict(metadata),
+        "metrics_final": metadata.status == "complete",
+        "metrics": _json_safe(metrics),
+    }
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     trades.to_csv(out_dir / "trades.csv", index=False)
     equity_curve.to_csv(out_dir / "equity_curve.csv", index=False)
+    if has_unresolved:
+        assert unresolved_events is not None
+        unresolved_events.to_csv(out_dir / "unresolved_events.csv", index=False)
     return out_dir
 
 

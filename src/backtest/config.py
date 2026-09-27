@@ -29,6 +29,8 @@ class BacktestConfig:
     maximum_positions: int | None = None
     lot_size: int | None = None
     long_only: bool = True
+    run_type: str = "smoke_test"
+    dividends_included: bool = False
     execution_lag_days: int = 1
     execution_price: str | None = None
     trading_days_per_year: int | None = None
@@ -50,6 +52,7 @@ class BacktestConfig:
         evaluation = raw.get("evaluation") or {}
         repro = raw.get("reproducibility") or {}
         output = raw.get("output") or {}
+        run = raw.get("run") or {}
         return cls(
             initial_capital=capital.get("initial_capital"),
             commission_model=commission.get("model", "rate"),
@@ -64,6 +67,8 @@ class BacktestConfig:
             maximum_positions=position.get("maximum_positions"),
             lot_size=position.get("lot_size"),
             long_only=position.get("long_only", True),
+            run_type=run.get("run_type", "smoke_test"),
+            dividends_included=evaluation.get("dividends_included", False),
             execution_lag_days=execution.get("execution_lag_days", 1),
             execution_price=execution.get("execution_price"),
             trading_days_per_year=evaluation.get("trading_days_per_year"),

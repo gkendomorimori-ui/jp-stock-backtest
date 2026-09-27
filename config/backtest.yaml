@@ -17,10 +17,29 @@ costs:
 
 period:
   # TODO: fix after data is downloaded (J-Quants Light plan or above is needed for 5 years).
-  # A 20-trading-day warm-up must exist BEFORE start_date (signals need 20 prior days).
-  start_date: null             # TODO: YYYY-MM-DD
+  # A 20-trading-day warm-up must exist BEFORE start_date (signals need 20 prior days),
+  # so the evaluated period is 20 trading days shorter than the downloaded data.
+  start_date: null             # TODO: YYYY-MM-DD (first evaluated day, after the warm-up)
   end_date: null               # TODO: YYYY-MM-DD
   preset: 5y                   # intended length: past 5 years of daily data
+
+  # Development / final-evaluation split (docs/BACKTEST_RULES.md).
+  # Fix the boundary AFTER downloading data and BEFORE looking at any strategy result.
+  # Each segment starts from initial_capital with no positions.
+  split:
+    development:               # older ~3 years
+      start_date: null         # TODO
+      end_date: null           # TODO
+    final_evaluation:          # newer ~2 years; never tune parameters on this segment
+      start_date: null         # TODO
+      end_date: null           # TODO
+    # The 20 trading days before final_evaluation.start_date may be used for indicators only.
+    indicator_only_days_before_final: 20
+
+run:
+  # smoke_test | development | final_evaluation
+  # Free-plan / small-data runs are smoke_test and must not be used as evaluation results.
+  run_type: smoke_test
 
 position:
   maximum_positions: 5         # max concurrent positions (all strategies)
@@ -35,6 +54,13 @@ execution:
 evaluation:
   trading_days_per_year: 252
   risk_free_rate: 0.0
+  dividends_included: false    # initial version: price and costs only, no dividends
+
+benchmark:
+  name: TOPIX                  # price index (NOT dividend-inclusive)
+  source: jquants_topix        # /v2/indices/bars/daily/topix, field C
+  dividends_included: false
+  normalize_to_start: true     # rebased to initial_capital on the first day of the same period
 
 reproducibility:
   random_seed: null            # no randomness used so far

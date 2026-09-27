@@ -1,8 +1,8 @@
-# Parameters for strategies/high_price_breakout.md (v0.1.0).
+# Parameters for strategies/high_price_breakout.md (v0.2.0).
 # Code must read these values; do not hard-code them.
 
 name: high_price_breakout
-version: 0.1.0
+version: 0.2.0
 
 parameters:
   lookback_days: 20            # window T-20 .. T-1 (signal day T excluded)

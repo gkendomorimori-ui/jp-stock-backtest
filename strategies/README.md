@@ -19,4 +19,4 @@
 
 | name | version | 概要 | 状態 |
 |---|---|---|---|
-| [high_price_breakout](high_price_breakout.md) | 0.1.0 | 20日高値の終値ブレイク＋出来高2倍。翌日寄付で買い、+10%利確／−5%損切り／最大20営業日 | 仕様確定・未実装 |
+| [high_price_breakout](high_price_breakout.md) | 0.2.0 | 20日高値の終値ブレイク＋出来高2倍。翌日寄付で買い、+10%利確／−5%損切り／最大20営業日 | 仕様確定・未実装 |

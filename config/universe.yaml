@@ -25,14 +25,23 @@ universe:
       - {code: "0105", name: TOKYO PRO MARKET}
       - {code: "0109", name: その他}
 
-  # Securities to exclude even if listed in the markets above.
-  exclude_product_types:
-    - etf
-    - etn
-    - reit                     # incl. infrastructure funds
-    - preferred_share
-  # TODO: map these to concrete J-Quants field values (e.g. ProdCat) at the first
-  # connection check, and record the mapping in docs/DATA_SOURCES.md.
+  # Product category (J-Quants master field `ProdCat`, verified against the spec 2026-09-27).
+  # Only 011 (domestic equities) can be common stock. 011 ALSO contains preferred
+  # securities, so ProdCat alone cannot isolate common stock (see docs/DATA_SOURCES.md).
+  product_category:
+    include: ["011"]           # domestic equities
+    exclude:
+      - {code: "012", name: 優先出資証券}
+      - {code: "013", name: REIT}
+      - {code: "014", name: ETF}
+      - {code: "021", name: 外国株式}
+      - {code: "022", name: 外国REIT}
+      - {code: "023", name: 外国ETF}
+      - {code: "024", name: 外国預託証券}
+  # Anything that cannot be positively classified as common stock is NOT included.
+  # TODO: decide how to separate preferred shares inside 011 after the connection check
+  # (scripts/check_jquants_connection.py reports the unclassified count).
+  unclassified_policy: exclude
 
   index: null                  # unused (mode == market)
   symbols: []                  # unused (mode == market)
@@ -44,15 +53,19 @@ universe:
     min_avg_turnover: 100000000
     turnover_window_days: 20
     turnover_window_includes_signal_day: false
-    # A security needs 20 valid trading days before T; otherwise it is excluded on T.
+    # New-entry data condition: the 20 exchange trading days T-20 .. T-1 are FIXED by the
+    # exchange calendar (/v2/markets/calendar, HolDiv 1 or 2). Every one of them must have
+    # valid OHLC, adjusted high/volume and turnover; T itself must have valid AdjC/AdjVo.
+    # Missing days are NOT skipped/back-filled with older data. This filter applies to new
+    # entries only; it never removes or force-closes an existing position.
     min_history_days: 20
+    history_window: fixed_exchange_calendar
     exclude_symbols: []
 
   survivorship:
     # J-Quants returns delisted securities for dates when they were listed, so delisted
-    # securities are included. TODO: confirm at the first connection check. If this turns
-    # out to be impossible, set false and state the limitation in README.md.
+    # securities are included. TODO: confirm with a KNOWN delisted security at the
+    # connection check. If impossible, set false and state the limitation in README.md.
     include_delisted: true
 
-benchmark:
-  symbol: null                 # TODO: not decided (e.g. TOPIX)
+# Benchmark is defined in config/backtest.yaml (TOPIX price index).

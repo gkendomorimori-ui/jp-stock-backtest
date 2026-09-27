@@ -35,6 +35,18 @@ def test_repository_backtest_config_values() -> None:
     assert config.long_only is True
     assert config.execution_lag_days == 1
     assert config.execution_price == "open"
+    assert config.run_type == "smoke_test"
+    assert config.dividends_included is False
+
+
+def test_repository_split_and_benchmark() -> None:
+    raw = load_yaml("config/backtest.yaml")
+    split = raw["period"]["split"]
+    assert set(split) >= {"development", "final_evaluation"}
+    assert split["indicator_only_days_before_final"] == 20
+    bench = raw["benchmark"]
+    assert bench["name"] == "TOPIX"
+    assert bench["dividends_included"] is False
 
 
 def test_repository_backtest_config_only_period_is_todo() -> None:
@@ -78,12 +90,16 @@ def test_repository_universe_config() -> None:
     assert current == {"0111", "0112", "0113"}
     assert legacy == {"0101", "0102", "0104", "0106", "0107"}
     assert not (current | legacy) & excluded
-    assert {"etf", "reit", "preferred_share"} <= set(u["exclude_product_types"])
+    pc = u["product_category"]
+    assert pc["include"] == ["011"]
+    assert {e["code"] for e in pc["exclude"]} == {"012", "013", "014", "021", "022", "023", "024"}
+    assert u["unclassified_policy"] == "exclude"
     f = u["filters"]
     assert f["min_avg_turnover"] == 100_000_000
     assert f["turnover_window_days"] == 20
     assert f["turnover_window_includes_signal_day"] is False
     assert f["min_history_days"] == 20
+    assert f["history_window"] == "fixed_exchange_calendar"
 
 
 # --- strategies/high_price_breakout.yaml ---
@@ -92,7 +108,7 @@ def test_repository_universe_config() -> None:
 def test_high_price_breakout_parameters() -> None:
     spec = load_yaml("strategies/high_price_breakout.yaml")
     assert spec["name"] == "high_price_breakout"
-    assert spec["version"] == "0.1.0"
+    assert spec["version"] == "0.2.0"
     p = spec["parameters"]
     assert p == {
         "lookback_days": 20,
