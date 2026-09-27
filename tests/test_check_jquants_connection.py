@@ -21,8 +21,8 @@ check = _load()
 @pytest.mark.parametrize(
     "row,expected",
     [
-        ({"Mkt": "0111", "ProdCat": "011", "Code": "72030"}, "common_candidate"),
-        ({"Mkt": "0104", "ProdCat": "011", "Code": "130A0"}, "common_candidate"),
+        ({"Mkt": "0111", "ProdCat": "011", "Code": "72030"}, "common_stock"),
+        ({"Mkt": "0104", "ProdCat": "011", "Code": "130A0"}, "common_stock"),
         ({"Mkt": "0111", "ProdCat": "011", "Code": "25935"}, "unclassified"),
         ({"Mkt": "0112", "ProdCat": "099", "Code": "99990"}, "unclassified"),
         ({"Mkt": "0111", "ProdCat": "014", "Code": "13060"}, "excluded_prodcat"),
@@ -63,55 +63,97 @@ def test_missing_api_key_stops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         check.load_api_key()
 
 
+CURRENT = [
+    {"Code": "72030", "CoName": "A", "Mkt": "0111", "MktNm": "P", "ProdCat": "011"},
+    {"Code": "25935", "CoName": "B（優先株式）", "Mkt": "0111", "MktNm": "P", "ProdCat": "011"},
+]
+OLD = [
+    {"Code": "72030", "CoName": "A", "Mkt": "0111", "MktNm": "P", "ProdCat": "011"},
+    {"Code": "12340", "CoName": "Gone", "Mkt": "0112", "MktNm": "S", "ProdCat": "011"},
+]
+
+
+def _fake_get(self: object, path: str, params: dict[str, str]) -> dict[str, object]:
+    if path == "/markets/calendar":
+        return {"data": [{"Date": params["to"], "HolDiv": "1"}]}
+    if path == "/equities/master":
+        rows = CURRENT if params.get("date") == "2026-06-01" else OLD
+        if "code" in params:
+            rows = [r for r in rows if r["Code"] == params["code"]]
+        return {"data": rows}
+    if path == "/equities/bars/daily":
+        return {"data": [{"Date": "2025-03-14", "Code": params["code"], "C": 100.0}]}
+    return {"data": [{"Date": "2026-06-01", "C": 2800.0}]}  # TOPIX
+
+
+def _run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: list[str]) -> int:
+    monkeypatch.setattr(check.Client, "_get", _fake_get)
+    monkeypatch.setattr(check, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setenv("JQUANTS_API_KEY", "dummy")
+    argv = ["x", "--date", "2026-06-01", "--min-interval", "0"]
+    argv += ["--delisted-code", "12340", "--listed-date", "2025-03-14", *extra]
+    monkeypatch.setattr("sys.argv", argv)
+    result: int = check.main()
+    return result
+
+
 def test_main_runs_end_to_end_with_fake_api(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def fake_get(self: object, path: str, params: dict[str, str]) -> dict[str, object]:
-        if path == "/markets/calendar":
-            return {"data": [{"Date": params["to"], "HolDiv": "1"}]}
-        if path == "/equities/master" and params.get("date") == "2026-06-01":
-            return {
-                "data": [
-                    {"Code": "72030", "CoName": "A", "Mkt": "0111", "MktNm": "P", "ProdCat": "011"},
-                    {"Code": "25935", "CoName": "B", "Mkt": "0111", "MktNm": "P", "ProdCat": "011"},
-                ]
-            }
-        if path == "/equities/master":  # older snapshot / delisted lookup
-            return {
-                "data": [
-                    {"Code": "72030", "CoName": "A", "Mkt": "0111", "MktNm": "P", "ProdCat": "011"},
-                    {
-                        "Code": "12340",
-                        "CoName": "Gone",
-                        "Mkt": "0112",
-                        "MktNm": "S",
-                        "ProdCat": "011",
-                    },
-                ]
-            }
-        if path == "/equities/bars/daily":
-            return {"data": [{"Date": "2026-05-29", "Code": params["code"], "C": 100.0}]}
-        return {"data": [{"Date": "2026-05-29", "C": 2800.0}]}  # TOPIX
-
-    monkeypatch.setattr(check.Client, "_get", fake_get)
-    monkeypatch.setattr(check, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setenv("JQUANTS_API_KEY", "dummy")
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "x",
-            "--date",
-            "2026-06-01",
-            "--min-interval",
-            "0",
-            "--delisted-code",
-            "12340",
-            "--listed-date",
-            "2025-06-02",
-        ],
-    )
-    assert check.main() == 0
+    assert _run(monkeypatch, tmp_path, []) == 0
     out = capsys.readouterr().out
     assert "UNCLASSIFIED (not included as common stock): 1" in out
+    assert "common_stock rows whose name contains 優先: 0" in out
     assert "12340 Gone" in out
+    assert "master on 2025-03-14 for 12340: 1 row(s)" in out
     assert "present in master on 2026-06-01: False" in out
+    assert "=== 5. TOPIX ===" in out
+
+
+def test_only_delisted_skips_master_classification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(monkeypatch, tmp_path, ["--only", "delisted"]) == 0
+    out = capsys.readouterr().out
+    assert "=== 3." not in out
+    assert "CANDIDATES" not in out
+    assert "present in master on 2026-06-01: False" in out
+    assert "=== 5. TOPIX ===" in out
+
+
+def test_rate_limit_is_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    import urllib.error
+    from email.message import Message
+
+    calls = {"n": 0}
+
+    def flaky(self: object, path: str, params: dict[str, str]) -> dict[str, object]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.HTTPError("u", 429, "Too Many", Message(), io.BytesIO(b"{}"))
+        return {"data": [{"ok": 1}]}
+
+    monkeypatch.setattr(check.Client, "_request", flaky)
+    client = check.Client("key", 0.0, tmp_path)
+    waits: list[float] = []
+    client._sleep = waits.append
+    assert client.get_all("/x", {}, "x") == [{"ok": 1}]
+    assert waits == [client.retry_wait]
+
+
+def test_rate_limit_gives_up_after_max_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+    import urllib.error
+    from email.message import Message
+
+    def always_429(self: object, path: str, params: dict[str, str]) -> dict[str, object]:
+        raise urllib.error.HTTPError("u", 429, "Too Many", Message(), io.BytesIO(b"{}"))
+
+    monkeypatch.setattr(check.Client, "_request", always_429)
+    client = check.Client("key", 0.0, tmp_path, max_retries=2)
+    client._sleep = lambda _s: None
+    with pytest.raises(SystemExit, match="HTTP 429"):
+        client.get_all("/x", {}, "x")

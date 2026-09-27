@@ -38,9 +38,12 @@ universe:
       - {code: "022", name: 外国REIT}
       - {code: "023", name: 外国ETF}
       - {code: "024", name: 外国預託証券}
+  # Common stock rule (decided 2026-09-27, docs/DATA_SOURCES.md):
+  #   ProdCat == "011" AND the 5th digit of the 5-digit code == "0".
+  # JPX code rules: common stock has no suffix; preferred shares use 5/6, other share
+  # classes 1-4/7-9. Verified on the 2026-06-01 master (6 non-"0" rows, all preferred).
+  common_stock_code_suffix: "0"
   # Anything that cannot be positively classified as common stock is NOT included.
-  # TODO: decide how to separate preferred shares inside 011 after the connection check
-  # (scripts/check_jquants_connection.py reports the unclassified count).
   unclassified_policy: exclude
 
   index: null                  # unused (mode == market)

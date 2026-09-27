@@ -94,6 +94,7 @@ def test_repository_universe_config() -> None:
     assert pc["include"] == ["011"]
     assert {e["code"] for e in pc["exclude"]} == {"012", "013", "014", "021", "022", "023", "024"}
     assert u["unclassified_policy"] == "exclude"
+    assert u["common_stock_code_suffix"] == "0"
     f = u["filters"]
     assert f["min_avg_turnover"] == 100_000_000
     assert f["turnover_window_days"] == 20
