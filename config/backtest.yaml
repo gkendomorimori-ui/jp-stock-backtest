@@ -58,7 +58,7 @@ evaluation:
 
 benchmark:
   name: TOPIX                  # price index (NOT dividend-inclusive)
-  source: jquants_topix        # /v2/indices/bars/daily/topix, field C
+  source: jquants_topix        # /v2/indices/bars/daily/topix, field C (Light plan or above)
   dividends_included: false
   normalize_to_start: true     # rebased to initial_capital on the first day of the same period
 

@@ -67,8 +67,8 @@ universe:
 
   survivorship:
     # J-Quants returns delisted securities for dates when they were listed, so delisted
-    # securities are included. TODO: confirm with a KNOWN delisted security at the
-    # connection check. If impossible, set false and state the limitation in README.md.
+    # securities are included. Verified 2026-09-27 with Net One Systems (75180, delisted
+    # 2025-03-18): master and daily bars up to the last trading day 2025-03-17.
     include_delisted: true
 
 # Benchmark is defined in config/backtest.yaml (TOPIX price index).
