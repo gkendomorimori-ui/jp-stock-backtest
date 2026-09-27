@@ -100,7 +100,25 @@ Execution at Day T+1
 | pnl | 損益（コスト控除後） |
 | return_pct | 損益率 |
 | exit_reason | stop_loss_open / take_profit_open / stop_loss / take_profit / time_exit / end_of_test |
-| holding_days | 保有営業日数（購入日を1日目とする） |
+| holding_days | 保有営業日数（購入日を1日目とする。取引所の営業日カレンダー基準） |
+| exit_phase | 決済の時点：`open`（寄付）/ `intraday`（日中）/ `close`（引け） |
+| intraday_both_touched | 決済日の日中の値幅（安値 ≤ 損切り水準 かつ 高値 ≥ 利確水準）が両方の水準に届いたか。**寄付で決済した取引は空欄**（日中の値幅で判定する前に決済済みのため）。引けの決済は、日中の判定をしてどちらにも届かなかったので `False` |
+| stop_priority_applied | 損切り優先のルールで結果が決まったか（両方に届き、損切りで決済した）。寄付の決済は空欄 |
+
+`intraday_both_touched`（両方に届いた）と `stop_priority_applied`（ルールを実際に適用した）は、意味の違う別の項目として記録する。現在の処理では、日中に両方に届けば必ず損切り優先で決済するので、2つの件数は一致する。今後ルールが変わっても区別できるように、分けて残している。
+
+### orders.csv
+
+| status | 意味 |
+|---|---|
+| `ignored_already_held` | T 日の終値時点ですでに保有中の銘柄のため、注文を作らなかった（買い増ししない） |
+| `not_placed_unaffordable` | 予算（総資産の20%）で100株を買えないため、発注しなかった |
+| `cancelled_no_slot` | T+1 の寄付で空き枠がなく取消 |
+| `cancelled_not_tradable` | T+1 に売買が成立しておらず取消 |
+| `cancelled_insufficient_funds` | 減額しても0株になり取消 |
+| `filled` | 購入 |
+
+各シグナルは、上から順に最初に当てはまった理由1つに分類される（重複しない）。条件を満たしたシグナルはすべて orders.csv に1行ずつ記録され、`summary.json` の `stats.signals` と行数が一致する（評価期間の最終日のシグナルは、翌営業日がないため数えない）。
 
 ### equity_curve.csv（暫定カラム）
 

@@ -134,6 +134,44 @@ def verify_run(run_dir: Path) -> tuple[list[Check], dict[str, Any]]:
     )
     add("every trade has a filled order", (merged["_merge"] == "both").all())
 
+    # --- signal accounting (runs that log ignored held-symbol signals)
+    stats = summary.get("stats", {})
+    if "signals_ignored_already_held" in stats:
+        add(
+            "every signal has exactly one orders.csv row",
+            int(stats["signals"]) == len(orders),
+            f"signals {stats['signals']}, rows {len(orders)}",
+        )
+        add(
+            "ignored-held count matches orders.csv",
+            int(stats["signals_ignored_already_held"])
+            == int((orders["status"] == "ignored_already_held").sum()),
+        )
+
+    # --- diagnostic columns (runs after the logging update)
+    if "exit_phase" in trades.columns:
+        both = trades["intraday_both_touched"]
+        applied = trades["stop_priority_applied"]
+        opened = trades["exit_phase"] == "open"
+        add(
+            "open exits are not counted as intraday both-touched",
+            both[opened].isna().all() and applied[opened].isna().all(),
+        )
+        app = trades[applied.astype("boolean").fillna(False)]
+        add(
+            "stop priority applied only to stop-loss exits that touched both levels",
+            (app["exit_reason"] == "stop_loss").all()
+            and app["intraday_both_touched"].astype(bool).all(),
+            f"{len(app)} trades",
+        )
+        n_both = int(both.astype("boolean").fillna(False).sum())
+        add(
+            "both-touched / priority-applied counts match summary",
+            stats.get("intraday_both_touched") == n_both
+            and stats.get("stop_priority_applied") == len(app),
+            f"both {n_both}, applied {len(app)}",
+        )
+
     # --- final equity
     if open_at_end == 0 and not needs_review and len(equity):
         final = float(execution["initial_capital"]) + trades["pnl"].sum()
@@ -145,6 +183,9 @@ def verify_run(run_dir: Path) -> tuple[list[Check], dict[str, Any]]:
         "order_status": orders["status"].value_counts().to_dict(),
         "holding_days": trades["holding_days"].describe().round(2).to_dict() if len(trades) else {},
         "symbols_traded": int(trades["symbol"].nunique()),
+        "signals_ignored_already_held": stats.get("signals_ignored_already_held"),
+        "intraday_both_touched": stats.get("intraday_both_touched"),
+        "stop_priority_applied": stats.get("stop_priority_applied"),
         "max_positions_held": int(equity["positions"].max()) if len(equity) else 0,
     }
     return checks, info

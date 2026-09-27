@@ -178,3 +178,18 @@ def test_verify_run_detects_inconsistency(run_dir: Path) -> None:
     checks, _ = verify_run(run_dir)
     bad = {c.name for c in checks if not c.ok}
     assert "equity = cash + position value (every day)" in bad
+
+
+def test_compare_runs_same_and_different(run_dir: Path, tmp_path: Path) -> None:
+    import shutil
+
+    from src.evaluation.compare import compare_runs
+
+    copy = tmp_path / "copy"
+    shutil.copytree(run_dir, copy)
+    assert all(d.identical for d in compare_runs(run_dir, copy))
+    trades = pd.read_csv(copy / "trades.csv", dtype={"symbol": str})
+    trades.loc[0, "exit_price"] += 0.01
+    trades.to_csv(copy / "trades.csv", index=False)
+    result = {d.name.split()[0]: d.identical for d in compare_runs(run_dir, copy)}
+    assert result == {"trades.csv": False, "equity_curve.csv": True, "orders.csv": True}

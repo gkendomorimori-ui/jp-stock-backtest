@@ -249,7 +249,12 @@ def test_ranking_by_score_then_symbol() -> None:
 
 def test_signal_on_held_symbol_is_ignored() -> None:
     r = run({"10010": entry_1000()}, {(0, "10010"): 2.0, (5, "10010"): 2.0})
-    assert len(r.orders) == 1
+    assert r.orders["status"].tolist() == ["filled", "ignored_already_held"]
+    ignored = r.orders.iloc[1]
+    assert ignored["signal_date"] == pd.Timestamp(DAYS[5]) and ignored["filled_quantity"] == 0
+    assert r.stats["signals"] == 2
+    assert r.stats["signals_ignored_already_held"] == 1
+    assert len(r.trades) == 1
 
 
 # ------------------------------------------------------------------ splits
@@ -307,3 +312,48 @@ def test_delisting_while_held_stops_the_run_without_settling() -> None:
     assert ev["last_valid_close"] == 1000
     assert ev["last_valid_close_date"] == pd.Timestamp(DAYS[5])
     assert r.equity_curve["cash"].iloc[-1] == pytest.approx(1_000_000 - 100 * 1001 * 1.0005)
+
+
+# ------------------------------------------------------------------ diagnostic columns
+
+
+def diag(t: pd.Series) -> tuple[Any, Any, Any]:
+    both, applied = t["intraday_both_touched"], t["stop_priority_applied"]
+    return (
+        t["exit_phase"],
+        None if pd.isna(both) else bool(both),
+        None if pd.isna(applied) else bool(applied),
+    )
+
+
+def test_both_levels_touched_intraday_and_priority_applied() -> None:
+    s = entry_1000()
+    set_bar(s, 2, 1000, 1110, 940, 1000)
+    r = run({"10010": s}, {(0, "10010"): 2.0})
+    assert diag(only_trade(r)) == ("intraday", True, True)
+    assert r.stats["intraday_both_touched"] == 1
+    assert r.stats["stop_priority_applied"] == 1
+
+
+def test_open_exit_is_not_counted_as_both_touched() -> None:
+    # gap below the stop at the open; the same day's high later reaches the take-profit level
+    s = entry_1000()
+    set_bar(s, 2, 940, 1120, 930, 1000)
+    r = run({"10010": s}, {(0, "10010"): 2.0})
+    assert diag(only_trade(r)) == ("open", None, None)
+    assert r.stats["intraday_both_touched"] == 0
+
+
+def test_single_level_intraday_exits() -> None:
+    s = entry_1000()
+    set_bar(s, 2, 1000, 1000, 940, 950)
+    assert diag(only_trade(run({"10010": s}, {(0, "10010"): 2.0}))) == ("intraday", False, False)
+    s = entry_1000()
+    set_bar(s, 2, 1000, 1110, 1000, 1000)
+    assert diag(only_trade(run({"10010": s}, {(0, "10010"): 2.0}))) == ("intraday", False, False)
+
+
+def test_close_exit_flags() -> None:
+    t = only_trade(run({"10010": flat(N, 900)}, {(0, "10010"): 2.0}))
+    assert t["exit_reason"] == "time_exit"
+    assert diag(t) == ("close", False, False)

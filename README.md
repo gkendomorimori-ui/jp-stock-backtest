@@ -169,6 +169,7 @@ python scripts/download_data.py --smoke     # 取得（約170リクエスト、4
 python scripts/process_data.py --smoke      # 加工（data/processed/jquants/）
 python scripts/run_backtest.py --smoke      # 実行（results/runs/<run_id>/）
 python scripts/verify_run.py                # 保存された結果の整合性チェック（利益の良し悪しは見ない）
+python scripts/compare_runs.py results/runs/<前回のrun_id>   # 最新の実行と売買結果が同一か比較
 ```
 
 - 期間は最初の実行時に決まり、`data/raw/jquants/smoke_period.json` に保存されます。再開しても期間は変わりません（決め直すときは `--redetermine`）

@@ -39,7 +39,20 @@ TRADE_COLUMNS: list[str] = [
     "return_pct",
     "exit_reason",
     "holding_days",
+    "exit_phase",
+    "intraday_both_touched",
+    "stop_priority_applied",
 ]
+"""Diagnostic columns (added after the first smoke test; they do not affect execution):
+
+* ``exit_phase``: ``open`` / ``intraday`` / ``close`` -- when the exit was executed.
+* ``intraday_both_touched``: on the exit day, did the intraday range (low <= stop level AND
+  high >= take-profit level) reach BOTH levels? Empty for exits at the open, because the
+  position was already closed before the intraday range could matter. ``False`` for close
+  exits whose intraday check ran and touched neither level.
+* ``stop_priority_applied``: ``True`` only when the stop-loss-first rule actually decided the
+  outcome (both levels touched intraday -> exited by stop loss). Empty for open exits.
+"""
 
 #: Columns of equity_curve.csv.
 EQUITY_COLUMNS: list[str] = ["date", "equity", "cash", "position_value", "positions"]
@@ -160,6 +173,7 @@ class BacktestEngine:
         self.status = "complete"
         self.stats: dict[str, Any] = {}
         self._i = 0
+        self._intraday_checked: set[str] = set()
 
     # ------------------------------------------------------------------ public
 
@@ -243,11 +257,11 @@ class BacktestEngine:
             if pd.isna(o):
                 continue
             if pos.time_exit_pending:
-                self._sell(pos, day, o, "time_exit")
+                self._sell(pos, day, o, "time_exit", phase="open")
             elif o <= pos.stop_loss:
-                self._sell(pos, day, o, "stop_loss_open")
+                self._sell(pos, day, o, "stop_loss_open", phase="open")
             elif o >= pos.take_profit:
-                self._sell(pos, day, o, "take_profit_open")
+                self._sell(pos, day, o, "take_profit_open", phase="open")
 
     def _open_buys(self, md: MarketData, day: pd.Timestamp, i: int) -> None:
         opens = _row(md["open"], day)
@@ -290,15 +304,28 @@ class BacktestEngine:
         self.pending = []
 
     def _intraday(self, md: MarketData, day: pd.Timestamp) -> None:
+        self._intraday_checked = set()
         lows, highs = _row(md["low"], day), _row(md["high"], day)
         for pos in sorted(self.positions.values(), key=lambda p: p.symbol):
             lo, hi = _val(lows, pos.symbol), _val(highs, pos.symbol)
             if pd.isna(lo) or pd.isna(hi):
                 continue
+            self._intraday_checked.add(pos.symbol)
+            both = bool(lo <= pos.stop_loss and hi >= pos.take_profit)
             if lo <= pos.stop_loss:
-                self._sell(pos, day, pos.stop_loss, "stop_loss")
+                self._sell(
+                    pos, day, pos.stop_loss, "stop_loss", phase="intraday", both=both, applied=both
+                )
             elif hi >= pos.take_profit:
-                self._sell(pos, day, pos.take_profit, "take_profit")
+                self._sell(
+                    pos,
+                    day,
+                    pos.take_profit,
+                    "take_profit",
+                    phase="intraday",
+                    both=False,
+                    applied=False,
+                )
 
     def _close(self, md: MarketData, day: pd.Timestamp, i: int, is_last: bool) -> None:
         closes = _row(md["close"], day)
@@ -309,7 +336,7 @@ class BacktestEngine:
                 if pd.isna(cl):
                     pos.time_exit_pending = True
                 else:
-                    self._sell(pos, day, cl, "time_exit")
+                    self._sell(pos, day, cl, "time_exit", **self._close_flags(pos))
                     continue
             if is_last:
                 if pd.isna(cl):
@@ -320,7 +347,7 @@ class BacktestEngine:
                         "no trade on the last day; position left open",
                     )
                 else:
-                    self._sell(pos, day, cl, "end_of_test")
+                    self._sell(pos, day, cl, "end_of_test", **self._close_flags(pos))
 
     def _value_and_plan(
         self,
@@ -348,6 +375,11 @@ class BacktestEngine:
                 candidates.append((str(sym), float(row[sym])))
         self.stats["signals"] += len(candidates)
         self.stats["signal_days"] += int(len(candidates) > 0)
+        for sym, sc in sorted(candidates):
+            if sym in self.positions:
+                self.stats["signals_ignored_already_held"] += 1
+                ignored = PendingOrder(sym, day, sc, 0, 0, math.nan)
+                self._log_order(ignored, None, "ignored_already_held", 0, math.nan)
         ranked = sorted(
             ((sym, sc) for sym, sc in candidates if sym not in self.positions),
             key=lambda x: (-x[1], x[0]),
@@ -375,13 +407,29 @@ class BacktestEngine:
         self.unresolved = []
         self.status = "complete"
         self._i = 0
-        self.stats = {"signals": 0, "signal_days": 0}
+        self.stats = {"signals": 0, "signal_days": 0, "signals_ignored_already_held": 0}
+        self._intraday_checked = set()
 
     def _round_lot(self, shares: float) -> int:
         lot = self.p.lot_size
         return int(math.floor(shares / lot + _EPS)) * lot
 
-    def _sell(self, pos: Position, day: pd.Timestamp, base_price: float, reason: str) -> None:
+    def _close_flags(self, pos: Position) -> dict[str, Any]:
+        if pos.symbol in self._intraday_checked:
+            return {"phase": "close", "both": False, "applied": False}
+        return {"phase": "close", "both": None, "applied": None}
+
+    def _sell(
+        self,
+        pos: Position,
+        day: pd.Timestamp,
+        base_price: float,
+        reason: str,
+        *,
+        phase: str,
+        both: bool | None = None,
+        applied: bool | None = None,
+    ) -> None:
         fill = base_price * (1 - self.p.slippage_rate)
         gross = pos.quantity * fill
         commission = gross * self.p.commission_rate
@@ -403,6 +451,9 @@ class BacktestEngine:
                 pnl / pos.entry_cost,
                 reason,
                 holding_days,
+                phase,
+                both,
+                applied,
             ]
         )
         del self.positions[pos.symbol]
@@ -449,6 +500,11 @@ class BacktestEngine:
         orders = pd.DataFrame(self.order_rows, columns=ORDER_COLUMNS)
         counts = orders["status"].value_counts().to_dict() if not orders.empty else {}
         self.stats["orders"] = {str(k): int(v) for k, v in counts.items()}
+        both = [t for t in self.trades if t[TRADE_COLUMNS.index("intraday_both_touched")] is True]
+        self.stats["intraday_both_touched"] = len(both)
+        self.stats["stop_priority_applied"] = sum(
+            1 for t in self.trades if t[TRADE_COLUMNS.index("stop_priority_applied")] is True
+        )
         return EngineResult(
             trades=pd.DataFrame(self.trades, columns=TRADE_COLUMNS),
             equity_curve=pd.DataFrame(self.equity_rows, columns=EQUITY_COLUMNS),
