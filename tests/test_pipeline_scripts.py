@@ -7,6 +7,7 @@ from types import ModuleType
 
 import pytest
 
+from src.backtest.periods import PeriodPlan, Segment
 from src.data.providers.jquants import write_raw_atomic
 from tests.synthetic import raw_rows
 from tests.test_end_to_end import DAYS, EVAL_END, EVAL_START, build, hand_calculation
@@ -56,6 +57,23 @@ def test_process_and_run_scripts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
     run = _load("run_backtest")
     monkeypatch.setattr(run, "PROJECT_ROOT", tmp_path)
+    # synthetic dates: treat the smoke period as the viewed segment of a test plan
+    test_plan = PeriodPlan(
+        DAYS[0],
+        DAYS[-1],
+        20,
+        (
+            Segment("initial_warmup", DAYS[0], DAYS[EVAL_START - 1], 20, "warmup"),
+            Segment(
+                "viewed_reference",
+                DAYS[EVAL_START],
+                DAYS[EVAL_END],
+                EVAL_END - EVAL_START + 1,
+                "viewed",
+            ),
+        ),
+    )
+    monkeypatch.setattr(run, "load_period_plan", lambda: test_plan)
     monkeypatch.setattr(run, "PROCESSED", tmp_path / "data" / "processed" / "jquants")
     assert run.main(["--smoke"]) == 0
 
@@ -103,3 +121,25 @@ def _series_from_processed(data: object) -> dict[str, dict[str, list[object]]]:
             "volume": g["volume"].tolist(),
         }
     return out
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--period", "final_evaluation"],
+        ["--period", "holdout"],
+        ["--period", "final_evaluation", "--run-type", "development", "--open-sealed-period"],
+        ["--start", "2024-01-04", "--end", "2024-06-28"],
+        ["--period", "initial_warmup"],
+    ],
+)
+def test_run_script_refuses_sealed_or_mixed_periods(
+    args: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run = _load("run_backtest")
+    monkeypatch.setattr(run, "PROCESSED", tmp_path / "nothing")  # data must not even be loaded
+    assert run.main(args) == 1
+    assert "REFUSED" in capsys.readouterr().out

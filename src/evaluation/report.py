@@ -14,7 +14,7 @@ import pandas as pd
 from src.utils.git import get_commit_hash
 
 #: Allowed run types (docs/BACKTEST_RULES.md "実行の種類").
-RUN_TYPES: tuple[str, ...] = ("smoke_test", "development", "final_evaluation")
+RUN_TYPES: tuple[str, ...] = ("smoke_test", "development", "final_evaluation", "holdout")
 
 #: Allowed run statuses. ``needs_review`` means results are NOT final.
 RUN_STATUSES: tuple[str, ...] = ("complete", "needs_review")

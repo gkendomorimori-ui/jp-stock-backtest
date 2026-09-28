@@ -16,24 +16,48 @@ costs:
     ticks: null                # unused (model == rate)
 
 period:
-  # TODO: fix after data is downloaded (J-Quants Light plan or above is needed for 5 years).
-  # A 20-trading-day warm-up must exist BEFORE start_date (signals need 20 prior days),
-  # so the evaluated period is 20 trading days shorter than the downloaded data.
-  start_date: null             # TODO: YYYY-MM-DD (first evaluated day, after the warm-up)
-  end_date: null               # TODO: YYYY-MM-DD
-  preset: 5y                   # intended length: past 5 years of daily data
+  # Decided 2026-09-29 (docs/EVALUATION_PLAN.md, option 1), BEFORE looking at any result
+  # on these periods. All dates are INCLUSIVE and are exchange trading days.
+  # Trading-day counts: computed with the JPX holiday rules and cross-checked against the
+  # Light-plan calendar total (1,221 days); re-verify with scripts/check_periods.py.
+  data_start: 2021-09-29       # first date the Light plan returned (2026-09-29)
+  data_end: 2026-09-28
+  warmup_trading_days: 20      # indicators only, immediately before each segment start
 
-  # Development / final-evaluation split (docs/BACKTEST_RULES.md).
-  # Fix the boundary AFTER downloading data and BEFORE looking at any strategy result.
-  # Each segment starts from initial_capital with no positions.
+  # start_date / end_date = the period used by default for runs (development only).
+  start_date: 2021-10-27
+  end_date: 2024-04-02
+  preset: null
+
+  # Each segment starts with initial_capital, no positions and no carried-over orders.
+  # The first signal is judged at the close of the segment's first day.
   split:
-    development:               # older ~3 years
-      start_date: null         # TODO
-      end_date: null           # TODO
-    final_evaluation:          # newer ~2 years; never tune parameters on this segment
-      start_date: null         # TODO
-      end_date: null           # TODO
-    # The 20 trading days before final_evaluation.start_date may be used for indicators only.
+    initial_warmup:            # indicators only; no trading, no results
+      start_date: 2021-09-29
+      end_date: 2021-10-26
+      trading_days: 20
+      status: warmup
+    development:               # baseline check + pre-registered sensitivity analyses
+      start_date: 2021-10-27
+      end_date: 2024-04-02
+      trading_days: 595
+      status: open
+    final_evaluation:          # NOT viewed. Do not compute/show results until frozen
+      start_date: 2024-04-03
+      end_date: 2026-04-02
+      trading_days: 488
+      status: sealed
+    viewed_reference:          # smoke test already viewed; reference only, never merged
+      start_date: 2026-04-03
+      end_date: 2026-07-03
+      trading_days: 62
+      status: viewed
+    holdout:                   # extra check after the final evaluation; NOT viewed
+      start_date: 2026-07-06
+      end_date: 2026-09-28
+      trading_days: 56
+      status: sealed
+    # The 20 trading days before each segment start may be used for indicators only.
     indicator_only_days_before_final: 20
 
 run:

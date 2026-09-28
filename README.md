@@ -188,6 +188,19 @@ python scripts/compare_runs.py results/runs/<前回のrun_id>   # 最新の実�
 | `orders.csv` | 買い注文の一覧（約定・取消とその理由） |
 | `unresolved_events.csv` | 要確認の事象（上場廃止など）があった場合のみ |
 
+## 5年分のデータ（Light プラン）
+
+期間の分け方は [docs/EVALUATION_PLAN.md](docs/EVALUATION_PLAN.md) で確定済み（開発用 2021-10-27〜2024-04-02、最終評価用 2024-04-03〜2026-04-02 は**未閲覧・実行不可**）。
+
+```powershell
+python scripts/download_data.py --start 2021-09-29 --end 2026-09-28 --min-interval 1.1   # 古い日から順に取得
+python scripts/process_data.py --start 2021-09-29 --end 2026-09-28
+python scripts/check_periods.py                   # 取引所カレンダーで区間の営業日数を照合
+python scripts/run_backtest.py --period development
+```
+
+`run_backtest.py` は、最終評価用・追加確認用の区間や、区間をまたぐ期間の実行を拒否する。
+
 ## 検証期間とベンチマーク
 
 > 期間の分け方、閲覧済みの期間、感度分析の条件は [docs/EVALUATION_PLAN.md](docs/EVALUATION_PLAN.md) で管理する（成績を見る前に固定）。

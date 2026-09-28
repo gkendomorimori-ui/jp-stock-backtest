@@ -49,11 +49,12 @@ def test_repository_split_and_benchmark() -> None:
     assert bench["dividends_included"] is False
 
 
-def test_repository_backtest_config_only_period_is_todo() -> None:
+def test_repository_backtest_config_is_complete() -> None:
     config = BacktestConfig.from_dict(load_yaml("config/backtest.yaml"))
-    assert config.missing_fields() == ["start_date", "end_date"]
-    with pytest.raises(ValueError):
-        config.require_complete()
+    assert config.missing_fields() == []
+    config.require_complete()
+    # the default run period is the development segment
+    assert (config.start_date, config.end_date) == (date(2021, 10, 27), date(2024, 4, 2))
 
 
 # --- BacktestConfig behaviour ---
