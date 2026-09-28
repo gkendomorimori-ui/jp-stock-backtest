@@ -3,8 +3,10 @@
     python scripts/check_plan_range.py
 
 Steps (a few dozen requests):
-    1. TOPIX over the last ~5 years + margin -> first / last available TOPIX date
-       (TOPIX records exist only on trading days, so they also give a trading-day list).
+    1. TOPIX: find the latest available window (stepping back from today), then the
+       earliest available start date by bisection (requests outside the plan's range are
+       refused with HTTP 400/403, so no single request spans the unknown boundary), then
+       fetch the whole available range once (TOPIX records exist only on trading days).
     2. Daily bars: probe forward from the first TOPIX date to the first date with data,
        and backward from the last TOPIX date to the latest date with data.
     3. Listed master on the first / last bar dates.
@@ -56,8 +58,57 @@ def rows(client: JQuantsClient, path: str, params: dict[str, str]) -> list[dict[
         return [r for p in client.get_pages(path, params) for r in p["data"]]
     except JQuantsHTTPError as e:
         if e.status in (400, 403):
-            return f"HTTP {e.status}"
+            return f"HTTP {e.status}: {_message(e.body)}"
         raise
+
+
+def _message(body: str) -> str:
+    try:
+        return str(json.loads(body).get("message", body))[:200]
+    except (ValueError, AttributeError):
+        return body[:200]
+
+
+def _ok(got: list[dict[str, Any]] | str) -> bool:
+    return isinstance(got, list) and len(got) > 0
+
+
+def topix_range(client: JQuantsClient, today: date, log: list[str]) -> tuple[date, date]:
+    """(earliest, latest) TOPIX dates available, found without crossing the boundary."""
+    latest: date | None = None
+    for k in range(20):
+        to = today - timedelta(days=7 * k)
+        got = rows(
+            client,
+            TOPIX_PATH,
+            {"from": (to - timedelta(days=20)).isoformat(), "to": to.isoformat()},
+        )
+        log.append(f"latest window to {to}: {len(got) if isinstance(got, list) else got}")
+        if _ok(got):
+            assert isinstance(got, list)
+            latest = max(date.fromisoformat(r["Date"]) for r in got)
+            break
+    if latest is None:
+        raise SystemExit("TOPIX: no available window in the last ~20 weeks\n" + "\n".join(log))
+
+    def valid(x: date) -> bool:
+        got = rows(
+            client, TOPIX_PATH, {"from": x.isoformat(), "to": (x + timedelta(days=14)).isoformat()}
+        )
+        log.append(f"start {x}: {len(got) if isinstance(got, list) else got}")
+        return _ok(got)
+
+    lo, hi = today - timedelta(days=7 * 365), latest - timedelta(days=30)
+    if valid(lo):
+        hi = lo
+    else:
+        while (hi - lo).days > 1:
+            mid = lo + (hi - lo) / 2
+            if valid(mid):
+                hi = mid
+            else:
+                lo = mid
+    return hi, latest
 
 
 def probe(client: JQuantsClient, days: list[str], max_tries: int) -> tuple[str | None, list[str]]:
@@ -75,12 +126,18 @@ def probe(client: JQuantsClient, days: list[str], max_tries: int) -> tuple[str |
 def run(client: JQuantsClient, today: date, max_tries: int = 15) -> dict[str, Any]:
     """Collect the availability report."""
     report: dict[str, Any] = {"checked_on": today.isoformat()}
-    start = today - timedelta(days=5 * 365 + 60)
-    topix = rows(client, TOPIX_PATH, {"from": start.isoformat(), "to": today.isoformat()})
+    search_log: list[str] = []
+    start, end = topix_range(client, today, search_log)
+    topix = rows(client, TOPIX_PATH, {"from": start.isoformat(), "to": end.isoformat()})
     if isinstance(topix, str) or not topix:
-        raise SystemExit(f"TOPIX not available: {topix if isinstance(topix, str) else 'no rows'}")
+        raise SystemExit(f"TOPIX full range refused: {topix}")
     tdays = sorted(r["Date"] for r in topix)
-    report["topix"] = {"first": tdays[0], "last": tdays[-1], "rows": len(tdays)}
+    report["topix"] = {
+        "first": tdays[0],
+        "last": tdays[-1],
+        "rows": len(tdays),
+        "search_log": search_log,
+    }
 
     first, log_first = probe(client, tdays, max_tries)
     last, log_last = probe(client, list(reversed(tdays)), max_tries)
