@@ -172,6 +172,8 @@ Total Return / CAGR / Maximum Drawdown / Sharpe Ratio / Sortino Ratio / Profit F
 
 ## 期間の分割
 
+> 具体的な期間・閲覧済みの期間・感度分析の条件：[EVALUATION_PLAN.md](EVALUATION_PLAN.md)
+
 5年分のデータを確保できた場合：
 
 - 古い約3年を**開発用**、新しい約2年を**最終評価用**とする
