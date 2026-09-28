@@ -66,6 +66,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--warmup", type=int, default=20, help="smoke: warm-up trading days")
     p.add_argument("--redetermine", action="store_true", help="smoke: recompute the period")
     p.add_argument("--min-interval", type=float, default=13.0, help="seconds between requests")
+    p.add_argument("--no-topix", action="store_true", help="with --start: skip TOPIX")
     args = p.parse_args(argv)
     if args.start and not args.end:
         p.error("--end is required with --start")
@@ -131,6 +132,9 @@ def main(argv: list[str] | None = None) -> int:
         days = [d for d in trading_days_from_calendar(cal_path) if start <= d <= end]
         print(f"{len(days)} trading days to cover ({start}..{end})")
         report = downloader.download_days(days)
+        if not args.smoke and not args.no_topix:
+            topix = downloader.download_topix(start, end)
+            print(f"TOPIX: {topix.relative_to(PROJECT_ROOT)}")
     except JQuantsError as e:
         print(f"ERROR: {e}")
         print("Stopped. Completed days are kept; run the same command again to resume.")

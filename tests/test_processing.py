@@ -145,3 +145,34 @@ def test_rows_with_wrong_date_rejected(tmp_path: Path) -> None:
     _write_day(tmp_path, "bars_daily", "2026-01-05", [bar("2026-01-06", "10010", 1.0, 1)])
     with pytest.raises(ProcessingError, match="different Date"):
         build_processed(tmp_path, cal, date(2026, 1, 5), date(2026, 1, 10))
+
+
+def test_topix_is_processed_when_downloaded(tmp_path: Path) -> None:
+    days = ["2026-01-05", "2026-01-06", "2026-01-07"]
+    cal = _setup(tmp_path, days)
+    rows = [{"Date": d, "O": 1.0, "H": 2.0, "L": 0.5, "C": 1.5} for d in ["2026-01-02", *days]]
+    write_raw_atomic(
+        tmp_path / "jquants" / "topix" / "2026-01-01_2026-01-10.json.gz", "x", {}, [{"data": rows}]
+    )
+    data = build_processed(tmp_path, cal, date(2026, 1, 5), date(2026, 1, 10))
+    assert data.topix is not None
+    assert [d.date().isoformat() for d in data.topix["date"]] == days  # clipped to the range
+    out = save_processed(data, tmp_path / "processed")
+    import json
+
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["topix_rows"] == 3 and manifest["topix_dates_match_trading_days"] is True
+    assert load_processed(out).topix is not None
+
+
+def test_topix_absent_is_none_and_stale_file_removed(tmp_path: Path) -> None:
+    days = ["2026-01-05"]
+    cal = _setup(tmp_path, days)
+    data = build_processed(tmp_path, cal, date(2026, 1, 5), date(2026, 1, 10))
+    assert data.topix is None
+    out = tmp_path / "processed"
+    out.mkdir()
+    (out / "topix.parquet").write_bytes(b"stale")
+    save_processed(data, out)
+    assert not (out / "topix.parquet").exists()
+    assert load_processed(out).topix is None

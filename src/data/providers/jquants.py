@@ -32,6 +32,7 @@ ENDPOINTS: dict[str, str] = {
     "bars_daily": "/equities/bars/daily",
     "master": "/equities/master",
     "calendar": "/markets/calendar",
+    "topix": "/indices/bars/daily/topix",
 }
 
 #: HolDiv values that are TSE trading days (1 = business day, 2 = half-day session).
@@ -249,21 +250,33 @@ class JQuantsDownloader:
         """Path of the completed file for ``kind`` on ``day``."""
         return self.root / kind / f"{day.isoformat()}.json.gz"
 
+    def range_path(self, kind: str, start: date, end: date) -> Path:
+        """Path of the completed file for a range dataset (``calendar`` / ``topix``)."""
+        return self.root / kind / f"{start.isoformat()}_{end.isoformat()}.json.gz"
+
     def calendar_path(self, start: date, end: date) -> Path:
         """Path of the completed calendar file for a range."""
-        return self.root / "calendar" / f"{start.isoformat()}_{end.isoformat()}.json.gz"
+        return self.range_path("calendar", start, end)
 
-    def download_calendar(self, start: date, end: date) -> Path:
-        """Fetch the trading calendar for ``start..end`` in one request (skipped if present)."""
-        path = self.calendar_path(start, end)
+    def download_range(self, kind: str, start: date, end: date) -> Path:
+        """Fetch ``kind`` for ``start..end`` in one paginated request (skipped if present)."""
+        path = self.range_path(kind, start, end)
         if path.exists():
             return path
         params = {"from": start.isoformat(), "to": end.isoformat()}
-        pages = self.client.get_pages(ENDPOINTS["calendar"], params)
+        pages = self.client.get_pages(ENDPOINTS[kind], params)
         if sum(len(p["data"]) for p in pages) == 0:
-            raise EmptyDataError(f"calendar {start}..{end} returned no rows")
-        write_raw_atomic(path, ENDPOINTS["calendar"], params, pages)
+            raise EmptyDataError(f"{kind} {start}..{end} returned no rows")
+        write_raw_atomic(path, ENDPOINTS[kind], params, pages)
         return path
+
+    def download_calendar(self, start: date, end: date) -> Path:
+        """Fetch the trading calendar for ``start..end`` in one request (skipped if present)."""
+        return self.download_range("calendar", start, end)
+
+    def download_topix(self, start: date, end: date) -> Path:
+        """Fetch TOPIX (price index) daily bars for ``start..end`` (Light plan or above)."""
+        return self.download_range("topix", start, end)
 
     def download_day(self, kind: str, day: date) -> bool:
         """Download ``kind`` for one trading day. Returns False if it was already complete.

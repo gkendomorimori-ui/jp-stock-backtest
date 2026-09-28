@@ -83,11 +83,12 @@ class ProcessingError(Exception):
 
 @dataclass
 class ProcessedData:
-    """In-memory processed dataset."""
+    """In-memory processed dataset. ``topix`` is None when it was not downloaded."""
 
     bars: pd.DataFrame
     master: pd.DataFrame
     calendar: pd.DataFrame
+    topix: pd.DataFrame | None = None
 
 
 def load_calendar(path: Path) -> pd.DataFrame:
@@ -185,7 +186,33 @@ def build_processed(raw_root: Path, calendar_file: Path, start: date, end: date)
         raise ProcessingError("calendar file does not cover the requested range")
     bars = bars_from_rows(_load_day_files(raw_dir, "bars_daily", days))
     master = master_from_rows(_load_day_files(raw_dir, "master", days))
-    return ProcessedData(bars=bars, master=master, calendar=cal.reset_index(drop=True))
+    topix = load_topix(raw_dir, start, end)
+    return ProcessedData(bars=bars, master=master, calendar=cal.reset_index(drop=True), topix=topix)
+
+
+def load_topix(raw_dir: Path, start: date, end: date) -> pd.DataFrame | None:
+    """TOPIX (price index) ``date, open, high, low, close`` for ``start..end``, if downloaded.
+
+    Uses a raw ``topix/<from>_<to>.json.gz`` file whose range covers ``start..end``.
+    """
+    for path in sorted((raw_dir / "topix").glob("*_*.json.gz")):
+        a, b = path.name.removesuffix(".json.gz").split("_")
+        if date.fromisoformat(a) <= start and end <= date.fromisoformat(b):
+            rows = read_raw(path)
+            df = pd.DataFrame(
+                {
+                    "date": pd.to_datetime([r["Date"] for r in rows]),
+                    "open": [r.get("O") for r in rows],
+                    "high": [r.get("H") for r in rows],
+                    "low": [r.get("L") for r in rows],
+                    "close": [r.get("C") for r in rows],
+                }
+            )
+            df = df[(df["date"] >= pd.Timestamp(start)) & (df["date"] <= pd.Timestamp(end))]
+            if df["date"].duplicated().any():
+                raise ProcessingError("duplicated TOPIX dates")
+            return df.sort_values("date").reset_index(drop=True)
+    return None
 
 
 def save_processed(data: ProcessedData, out_dir: Path, extra: dict[str, Any] | None = None) -> Path:
@@ -194,6 +221,11 @@ def save_processed(data: ProcessedData, out_dir: Path, extra: dict[str, Any] | N
     data.bars.to_parquet(out_dir / "bars.parquet", index=False)
     data.master.to_parquet(out_dir / "master.parquet", index=False)
     data.calendar.to_parquet(out_dir / "calendar.parquet", index=False)
+    topix_file = out_dir / "topix.parquet"
+    if data.topix is not None:
+        data.topix.to_parquet(topix_file, index=False)
+    elif topix_file.exists():
+        topix_file.unlink()  # never leave a stale TOPIX from another range
     traded = data.bars.dropna(subset=PRICE_COLUMNS)
     ohlc_violations = int(
         (
@@ -213,6 +245,11 @@ def save_processed(data: ProcessedData, out_dir: Path, extra: dict[str, Any] | N
         "split_events": int((data.bars["adj_factor"] != 1.0).sum()),
         "ohlc_inconsistent_rows": ohlc_violations,
         "adjusted_basis": "recomputed from actual values and adj_factor; basis = last_date",
+        "topix_rows": None if data.topix is None else len(data.topix),
+        "topix_dates_match_trading_days": None
+        if data.topix is None
+        else list(data.topix["date"])
+        == list(data.calendar.loc[data.calendar["is_trading_day"], "date"]),
     } | (extra or {})
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return out_dir
@@ -225,8 +262,10 @@ def load_processed(out_dir: Path) -> ProcessedData:
             raise ProcessingError(
                 f"{out_dir / name}.parquet not found -- run scripts/process_data.py"
             )
+    topix_file = out_dir / "topix.parquet"
     return ProcessedData(
         bars=pd.read_parquet(out_dir / "bars.parquet"),
         master=pd.read_parquet(out_dir / "master.parquet"),
         calendar=pd.read_parquet(out_dir / "calendar.parquet"),
+        topix=pd.read_parquet(topix_file) if topix_file.exists() else None,
     )

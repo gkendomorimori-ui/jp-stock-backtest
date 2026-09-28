@@ -184,6 +184,12 @@ Backtest Engine
 - 分割・併合だけでは、シグナルは発生しない（テスト済み）
 - 注意：その銘柄の行が権利落ち日に存在しないと、係数が取れない。J-Quants は売買不成立の日も四本値 null の行を返す仕様なので、通常は問題にならない
 
+### topix.parquet
+
+- `date, open, high, low, close`：TOPIX（**価格指数**。配当込みではない）。`/v2/indices/bars/daily/topix` から期間指定で1回取得（Light プラン以上）
+- 生データは `data/raw/jquants/topix/<from>_<to>.json.gz`。加工時に対象期間で切り出す
+- ベンチマークは、評価期間の初日の終値を戦略の初期資金にそろえて換算する（`benchmark_equity`）。対象期間の営業日に1日でも欠けがあれば、数値は `null` にして理由を記録する
+
 ### master.parquet・calendar.parquet
 
 - `master.parquet`：`date, symbol, name, market_code, market_name, product_category`（日ごとの銘柄マスタ）

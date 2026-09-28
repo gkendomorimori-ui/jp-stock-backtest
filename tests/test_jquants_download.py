@@ -251,3 +251,20 @@ def test_latest_available_raises_on_other_errors() -> None:
     t.add("/equities/bars/daily", {"date": "2026-07-03"}, err(401))
     with pytest.raises(JQuantsHTTPError):
         find_latest_available(make_client(t, []), [date(2026, 7, 3)])
+
+
+def test_topix_range_download(tmp_path: Path) -> None:
+    t = FakeTransport()
+    params = {"from": "2021-09-29", "to": "2026-09-28"}
+    t.add(
+        "/indices/bars/daily/topix",
+        params,
+        ok([{"Date": "2021-09-29", "C": 1.0}], "k"),
+        ok([{"Date": "2026-09-28", "C": 2.0}]),
+    )
+    dl = JQuantsDownloader(make_client(t, []), tmp_path, log=lambda _m: None)
+    path = dl.download_topix(date(2021, 9, 29), date(2026, 9, 28))
+    assert path.name == "2021-09-29_2026-09-28.json.gz" and path.parent.name == "topix"
+    assert [r["C"] for r in read_raw(path)] == [1.0, 2.0]
+    dl.download_topix(date(2021, 9, 29), date(2026, 9, 28))
+    assert len(t.calls) == 2  # second call skipped (already complete)

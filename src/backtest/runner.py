@@ -12,16 +12,17 @@ from src.backtest.config import BacktestConfig
 from src.backtest.engine import BacktestEngine, EngineResult, ExecutionParams
 from src.data.market_data import MarketData
 from src.data.processing import ProcessedData
-from src.evaluation.metrics import compute_metrics
+from src.evaluation.metrics import cagr, compute_metrics, max_drawdown
 from src.evaluation.report import RunMetadata, make_run_id, save_run
 from src.strategies.high_price_breakout import HighPriceBreakout
 from src.universe import UniverseRules, eligibility
 
 #: Recorded when the benchmark series was not loaded.
 BENCHMARK_UNAVAILABLE_REASON = (
-    "TOPIX (price index) was not loaded: /v2/indices/bars/daily/topix is not available on "
-    "the J-Quants Free plan (HTTP 403, checked 2026-09-27). Benchmark comparison needs the "
-    "Light plan or above."
+    "TOPIX (price index) is not in the processed data. /v2/indices/bars/daily/topix is not "
+    "available on the J-Quants Free plan (HTTP 403, checked 2026-09-27); with the Light plan "
+    "or above, download it (scripts/download_data.py --start ... --end ...) and re-run "
+    "scripts/process_data.py."
 )
 
 BASE_NOTES: list[str] = [
@@ -121,18 +122,12 @@ def run_high_price_breakout(
     else:
         metrics = {}
 
-    benchmark = {
-        "name": "TOPIX",
-        "type": "price_index",
-        "dividends_included": False,
-        "status": "unavailable",
-        "unavailable_reason": BENCHMARK_UNAVAILABLE_REASON,
-        "total_return": None,
-        "cagr": None,
-        "max_drawdown": None,
-        "excess_total_return": None,
-    }
-    equity_curve = result.equity_curve.assign(benchmark_equity=None)
+    benchmark, bench_equity = topix_benchmark(
+        data.topix, result.equity_curve, params.initial_capital, metrics.get("total_return")
+    )
+    equity_curve = result.equity_curve.assign(
+        benchmark_equity=pd.Series(bench_equity, index=result.equity_curve.index, dtype="float64")
+    )
 
     run_notes = list(BASE_NOTES) + (notes or [])
     if result.status == "needs_review":
@@ -175,6 +170,58 @@ def run_high_price_breakout(
         extra_tables={"orders": result.orders},
     )
     return out_dir, result
+
+
+def topix_benchmark(
+    topix: pd.DataFrame | None,
+    equity_curve: pd.DataFrame,
+    initial_capital: float,
+    strategy_total_return: float | None,
+) -> tuple[dict[str, Any], list[float | None]]:
+    """TOPIX (price index) rebased to ``initial_capital`` on the first simulated day.
+
+    Returns the benchmark section and the ``benchmark_equity`` column. When TOPIX is missing
+    for any simulated day, every value is None and the reason is recorded.
+    """
+    section: dict[str, Any] = {
+        "name": "TOPIX",
+        "type": "price_index",
+        "dividends_included": False,
+        "rebased_on": None,
+        "status": "unavailable",
+        "unavailable_reason": None,
+        "total_return": None,
+        "cagr": None,
+        "max_drawdown": None,
+        "excess_total_return": None,
+    }
+    n = len(equity_curve)
+    if n == 0:
+        section["unavailable_reason"] = "no simulated days"
+        return section, [None] * n
+    if topix is None:
+        section["unavailable_reason"] = BENCHMARK_UNAVAILABLE_REASON
+        return section, [None] * n
+    closes = topix.set_index("date")["close"]
+    dates = pd.DatetimeIndex(pd.to_datetime(equity_curve["date"]))
+    aligned = closes.reindex(dates)
+    if aligned.isna().any():
+        missing = [d.date().isoformat() for d in dates[aligned.isna().to_numpy()]][:5]
+        section["unavailable_reason"] = f"TOPIX close missing on simulated days, e.g. {missing}"
+        return section, [None] * n
+    series = initial_capital * aligned / float(aligned.iloc[0])
+    total = float(series.iloc[-1] / series.iloc[0] - 1.0)
+    section.update(
+        status="available",
+        rebased_on=dates[0].date().isoformat(),
+        total_return=total,
+        cagr=cagr(series),
+        max_drawdown=max_drawdown(series),
+        excess_total_return=None
+        if strategy_total_return is None
+        else float(strategy_total_return) - total,
+    )
+    return section, [float(v) for v in series]
 
 
 def _rules_dict(rules: UniverseRules) -> dict[str, Any]:

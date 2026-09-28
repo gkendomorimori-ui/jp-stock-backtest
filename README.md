@@ -193,9 +193,10 @@ python scripts/compare_runs.py results/runs/<前回のrun_id>   # 最新の実�
 期間の分け方は [docs/EVALUATION_PLAN.md](docs/EVALUATION_PLAN.md) で確定済み（開発用 2021-10-27〜2024-04-02、最終評価用 2024-04-03〜2026-04-02 は**未閲覧・実行不可**）。
 
 ```powershell
-python scripts/download_data.py --start 2021-09-29 --end 2026-09-28 --min-interval 1.1   # 古い日から順に取得
+python scripts/download_data.py --start 2021-09-29 --end 2026-09-28 --min-interval 1.1   # 古い日から順に取得（最後に TOPIX も取得）
 python scripts/process_data.py --start 2021-09-29 --end 2026-09-28
 python scripts/check_periods.py                   # 取引所カレンダーで区間の営業日数を照合
+python scripts/check_data_quality.py              # 全期間のデータ品質確認（戦略の成績は計算しない）
 python scripts/run_backtest.py --period development
 ```
 

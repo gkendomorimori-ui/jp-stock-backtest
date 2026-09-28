@@ -193,3 +193,62 @@ def test_compare_runs_same_and_different(run_dir: Path, tmp_path: Path) -> None:
     trades.to_csv(copy / "trades.csv", index=False)
     result = {d.name.split()[0]: d.identical for d in compare_runs(run_dir, copy)}
     assert result == {"trades.csv": False, "equity_curve.csv": True, "orders.csv": True}
+
+
+def _topix(values: list[float]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(DAYS),
+            "open": values,
+            "high": values,
+            "low": values,
+            "close": values,
+        }
+    )
+
+
+def test_topix_benchmark_rebased_to_capital(tmp_path: Path) -> None:
+    data = build()
+    closes = [2000.0 + i for i in range(N)]
+    data.topix = _topix(closes)
+    out, _ = run_high_price_breakout(
+        data,
+        load_yaml("config/backtest.yaml"),
+        load_yaml("config/universe.yaml"),
+        load_yaml("strategies/high_price_breakout.yaml"),
+        eval_start=DAYS[EVAL_START],
+        eval_end=DAYS[EVAL_END],
+        run_type="smoke_test",
+        results_root=tmp_path,
+    )
+    s = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    bench = s["metadata"]["benchmark"]
+    expected = closes[EVAL_END] / closes[EVAL_START] - 1
+    assert bench["status"] == "available" and bench["unavailable_reason"] is None
+    assert bench["rebased_on"] == DAYS[EVAL_START].isoformat()
+    assert bench["total_return"] == pytest.approx(expected)
+    assert bench["max_drawdown"] == pytest.approx(0.0)
+    assert bench["excess_total_return"] == pytest.approx(s["metrics"]["total_return"] - expected)
+    eq = pd.read_csv(out / "equity_curve.csv")
+    assert eq["benchmark_equity"].iloc[0] == pytest.approx(1_500_000)
+    assert eq["benchmark_equity"].iloc[-1] == pytest.approx(1_500_000 * (1 + expected))
+
+
+def test_topix_missing_day_makes_benchmark_unavailable(tmp_path: Path) -> None:
+    data = build()
+    data.topix = _topix([2000.0] * N).drop(index=EVAL_START + 3).reset_index(drop=True)
+    out, _ = run_high_price_breakout(
+        data,
+        load_yaml("config/backtest.yaml"),
+        load_yaml("config/universe.yaml"),
+        load_yaml("strategies/high_price_breakout.yaml"),
+        eval_start=DAYS[EVAL_START],
+        eval_end=DAYS[EVAL_END],
+        run_type="smoke_test",
+        results_root=tmp_path,
+    )
+    bench = json.loads((out / "summary.json").read_text(encoding="utf-8"))["metadata"]["benchmark"]
+    assert bench["status"] == "unavailable"
+    assert DAYS[EVAL_START + 3].isoformat() in bench["unavailable_reason"]
+    assert bench["total_return"] is None
+    assert pd.read_csv(out / "equity_curve.csv")["benchmark_equity"].isna().all()
