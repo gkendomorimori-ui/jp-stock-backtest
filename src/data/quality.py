@@ -222,7 +222,7 @@ def check_quality(
         elif not api_ok:
             cat = "api_adjusted_disagrees"
         else:
-            cat = "confirmed_by_api_in_universe"
+            cat = "matches_api_in_universe"
         cats.append(cat)
         if in_uni:
             rows_out.append(

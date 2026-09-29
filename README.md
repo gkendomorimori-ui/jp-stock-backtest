@@ -198,6 +198,8 @@ python scripts/process_data.py --start 2021-09-29 --end 2026-09-28
 python scripts/check_periods.py                   # 取引所カレンダーで区間の営業日数を照合
 python scripts/check_data_quality.py              # 全期間のデータ品質確認（戦略の成績は計算しない）
 python scripts/run_backtest.py --period development
+python scripts/verify_run.py                      # 整合性チェック
+python scripts/breakdown_trades.py                # 補助的な内訳（10円未満 / +100%超 / どちらでもない）
 ```
 
 `run_backtest.py` は、最終評価用・追加確認用の区間や、区間をまたぐ期間の実行を拒否する。

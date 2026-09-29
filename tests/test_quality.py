@@ -62,7 +62,7 @@ def test_problems_are_detected() -> None:
     f = by_check(check_quality(data, RULES, KNOWN))
     # the +100% / -50% moves are also in the API's adjusted series -> source data, INFO
     assert f["large_moves"].level == "INFO"
-    assert "confirmed_by_api_in_universe" in f["large_moves"].message
+    assert "matches_api_in_universe" in f["large_moves"].message
     assert f["large_moves"].details["in_universe"][0]["symbol"] == "10010"
     # API AdjC = 1.0 vs recomputed 1000: not explainable by rounding
     assert f["adjustment_vs_api"].level == "WARN"
