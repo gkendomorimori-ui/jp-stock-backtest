@@ -26,7 +26,9 @@ PROCESSED = PROJECT_ROOT / "data" / "processed" / "jquants"
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point."""
+    """Entry point. ``--show CHECK`` prints that check's details in full (not truncated)."""
+    args = sys.argv[1:] if argv is None else argv
+    show = set(args[args.index("--show") + 1 :]) if "--show" in args else set()
     try:
         data = load_processed(PROCESSED)
     except ProcessingError as e:
@@ -41,7 +43,12 @@ def main(argv: list[str] | None = None) -> int:
     for f in findings:
         print(f"[{f.level:<5}] {f.check}: {f.message}")
         if f.details:
-            print("        " + json.dumps(f.details, ensure_ascii=False, default=str)[:1500])
+            text = json.dumps(f.details, ensure_ascii=False, default=str)
+            if f.check in show:
+                print(json.dumps(f.details, indent=2, ensure_ascii=False, default=str))
+            else:
+                more = " ...(--show で全体)" if len(text) > 1500 else ""
+                print("        " + text[:1500] + more)
     report = {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "findings": [f.__dict__ for f in findings],

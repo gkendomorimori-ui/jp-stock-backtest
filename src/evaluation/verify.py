@@ -53,7 +53,10 @@ def verify_run(run_dir: Path) -> tuple[list[Check], dict[str, Any]]:
         needs_review == (run_dir / "unresolved_events.csv").exists(),
         meta["status"],
     )
-    add("run_type recorded", meta["run_type"] in ("smoke_test", "development", "final_evaluation"))
+    add(
+        "run_type recorded",
+        meta["run_type"] in ("smoke_test", "development", "final_evaluation", "holdout"),
+    )
 
     # --- equity curve
     add(
@@ -99,7 +102,16 @@ def verify_run(run_dir: Path) -> tuple[list[Check], dict[str, Any]]:
     tp = trades[trades["exit_reason"].isin(["take_profit", "take_profit_open"])]
     sl = trades[trades["exit_reason"].isin(["stop_loss", "stop_loss_open"])]
     add("take-profit exits are gains", (tp["pnl"] > 0).all(), f"{len(tp)} trades")
-    add("stop-loss exits are losses", (sl["pnl"] < 0).all(), f"{len(sl)} trades")
+    if "carried_days" in trades.columns:
+        # a carried stop request is executed even if the price recovered (v2)
+        sl_same_day = sl[sl["carried_days"] == 0]
+        add(
+            "stop-loss exits executed on the trigger day are losses",
+            (sl_same_day["pnl"] < 0).all(),
+            f"{len(sl_same_day)} trades ({len(sl) - len(sl_same_day)} carried not checked)",
+        )
+    else:
+        add("stop-loss exits are losses", (sl["pnl"] < 0).all(), f"{len(sl)} trades")
     long_hold = trades[
         (trades["exit_reason"] == "time_exit")
         & (trades["holding_days"] < int(execution["max_holding_days"]))
@@ -152,7 +164,8 @@ def verify_run(run_dir: Path) -> tuple[list[Check], dict[str, Any]]:
     if "exit_phase" in trades.columns:
         both = trades["intraday_both_touched"]
         applied = trades["stop_priority_applied"]
-        opened = trades["exit_phase"] == "open"
+        phase_col = "trigger_phase" if "trigger_phase" in trades.columns else "exit_phase"
+        opened = trades[phase_col] == "open"
         add(
             "open exits are not counted as intraday both-touched",
             both[opened].isna().all() and applied[opened].isna().all(),
@@ -172,6 +185,72 @@ def verify_run(run_dir: Path) -> tuple[list[Check], dict[str, Any]]:
             f"both {n_both}, applied {len(app)}",
         )
 
+    # --- execution model price fields (runs with execution_model_version)
+    version = summary.get("execution_model_version")
+    if version is not None:
+        s = float(execution["slippage_rate"])
+        add("execution model version recorded", version in ("v1", "v2"), str(version))
+        add(
+            "exit price = base price after slippage",
+            ((trades["exit_price"] - trades["base_price"] * (1 - s)).abs() < 1e-6).all(),
+        )
+        intra = trades[(trades["exit_phase"] == "intraday")]
+        itp = intra[intra["exit_reason"] == "take_profit"]
+        isl = intra[intra["exit_reason"] == "stop_loss"]
+        if version == "v2":
+            tp_k = itp[itp["tick_class"] != "unknown"]
+            sl_k = isl[isl["tick_class"] != "unknown"]
+            add(
+                "v2 intraday take profit: level <= base < level + 1 tick",
+                (
+                    (tp_k["base_price"] >= tp_k["trigger_level"] - 1e-6)
+                    & (tp_k["base_price"] < tp_k["trigger_level"] + tp_k["tick_size"] + 1e-6)
+                ).all(),
+                f"{len(tp_k)} trades",
+            )
+            add(
+                "v2 intraday stop loss: level - 1 tick < base <= level",
+                (
+                    (sl_k["base_price"] <= sl_k["trigger_level"] + 1e-6)
+                    & (sl_k["base_price"] > sl_k["trigger_level"] - sl_k["tick_size"] - 1e-6)
+                ).all(),
+                f"{len(sl_k)} trades",
+            )
+            rounded = trades[trades["tick_rounded"].astype("boolean").fillna(False)]
+            tr = stats.get("tick_rounded", {})
+            add(
+                "tick-rounded counts match summary",
+                int((rounded["exit_reason"] == "take_profit").sum()) == tr.get("take_profit")
+                and int((rounded["exit_reason"] == "stop_loss").sum()) == tr.get("stop_loss"),
+                str(tr),
+            )
+        else:
+            add(
+                "v1 intraday exits at the level itself",
+                ((intra["base_price"] - intra["trigger_level"]).abs() < 1e-6).all(),
+            )
+        carried = trades["carried_days"] > 0
+        add(
+            "carried exits: trigger date before exit date, same-day exits equal",
+            (trades.loc[carried, "trigger_date"] < trades.loc[carried, "exit_date"]).all()
+            and (trades.loc[~carried, "trigger_date"] == trades.loc[~carried, "exit_date"]).all(),
+            f"{int(carried.sum())} carried",
+        )
+        unfilled_file = run_dir / "sell_unfilled.csv"
+        if unfilled_file.exists():
+            unfilled = pd.read_csv(unfilled_file, dtype={"symbol": str})
+            counts = {str(k): int(v) for k, v in unfilled["cause"].value_counts().items()}
+            add(
+                "sell_unfilled.csv matches summary",
+                counts == stats.get("sell_unfilled", {}),
+                str(counts),
+            )
+        add(
+            "limit-up cancellations match summary",
+            int((orders["status"] == "cancelled_limit_up").sum())
+            == stats.get("buy_unfilled_limit_up", 0),
+        )
+
     # --- final equity
     if open_at_end == 0 and not needs_review and len(equity):
         final = float(execution["initial_capital"]) + trades["pnl"].sum()
@@ -187,5 +266,12 @@ def verify_run(run_dir: Path) -> tuple[list[Check], dict[str, Any]]:
         "intraday_both_touched": stats.get("intraday_both_touched"),
         "stop_priority_applied": stats.get("stop_priority_applied"),
         "max_positions_held": int(equity["positions"].max()) if len(equity) else 0,
+        "execution_model_version": summary.get("execution_model_version"),
+        "tick_rounded": stats.get("tick_rounded"),
+        "sell_unfilled": stats.get("sell_unfilled"),
+        "buy_unfilled_limit_up": stats.get("buy_unfilled_limit_up"),
+        "sells_executed_after_carry": stats.get("sells_executed_after_carry"),
+        "tick_class_unknown": stats.get("tick_class_unknown"),
+        "limit_flag_missing": stats.get("limit_flag_missing"),
     }
     return checks, info

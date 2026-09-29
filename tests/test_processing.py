@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -101,7 +102,7 @@ def _setup(raw: Path, days: list[str], skip: tuple[str, str] | None = None) -> P
     write_raw_atomic(cal_path, "/markets/calendar", {}, [{"data": cal}])
     for d in days:
         if skip != ("bars_daily", d):
-            _write_day(raw, "bars_daily", d, [bar(d, "10010", 100.0, 1000)])
+            _write_day(raw, "bars_daily", d, [bar(d, "10010", 100.0, 1000, UL="0", LL="1")])
         if skip != ("master", d):
             _write_day(
                 raw,
@@ -115,6 +116,7 @@ def _setup(raw: Path, days: list[str], skip: tuple[str, str] | None = None) -> P
                         "Mkt": "0111",
                         "MktNm": "P",
                         "ProdCat": "011",
+                        "ScaleCat": "TOPIX Mid400",
                     }
                 ],
             )
@@ -130,6 +132,18 @@ def test_build_and_roundtrip(tmp_path: Path) -> None:
     out = save_processed(data, tmp_path / "processed")
     loaded = load_processed(out)
     pd.testing.assert_frame_equal(loaded.bars, data.bars)
+    pd.testing.assert_frame_equal(loaded.master, data.master)
+    assert loaded.bars["upper_limit"].tolist() == [0.0] * 3
+    assert loaded.bars["lower_limit"].tolist() == [1.0] * 3
+    assert loaded.master["scale_category"].tolist() == ["TOPIX Mid400"] * 3
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["limit_flags"]["lower_limit"] == {
+        "ones": 3,
+        "zeros": 0,
+        "missing": 0,
+        "missing_on_traded_rows": 0,
+    }
+    assert manifest["scale_category_missing_rows"] == 0
 
 
 def test_missing_trading_day_is_an_error(tmp_path: Path) -> None:
@@ -176,3 +190,42 @@ def test_topix_absent_is_none_and_stale_file_removed(tmp_path: Path) -> None:
     save_processed(data, out)
     assert not (out / "topix.parquet").exists()
     assert load_processed(out).topix is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("1", 1.0), ("0", 0.0), (1, 1.0), (0, 0.0), (1.0, 1.0), (" 1 ", 1.0)],
+)
+def test_limit_flags_parsed(raw: Any, expected: float) -> None:
+    bars = bars_from_rows([bar("2026-01-05", "10010", 100.0, 1000, UL=raw, LL=raw)])
+    assert bars["upper_limit"].iloc[0] == expected
+    assert bars["lower_limit"].iloc[0] == expected
+
+
+@pytest.mark.parametrize("raw", [None, "", "x", "2", True, float("nan")])
+def test_invalid_or_missing_limit_flag_stays_nan_not_zero(raw: Any) -> None:
+    bars = bars_from_rows([bar("2026-01-05", "10010", 100.0, 1000, UL=raw, LL="0")])
+    assert np.isnan(bars["upper_limit"].iloc[0])
+    assert bars["lower_limit"].iloc[0] == 0.0
+
+
+def test_limit_flag_fields_absent_stay_nan() -> None:
+    bars = bars_from_rows([bar("2026-01-05", "10010", 100.0, 1000)])
+    assert bars["upper_limit"].isna().all() and bars["lower_limit"].isna().all()
+
+
+def test_scale_category_kept_and_missing_is_none() -> None:
+    from src.data.processing import master_from_rows
+
+    base = {"Date": "2026-01-05", "CoName": "A", "Mkt": "0111", "MktNm": "P", "ProdCat": "011"}
+    m = master_from_rows(
+        [
+            base | {"Code": "10010", "ScaleCat": "TOPIX Core30"},
+            base | {"Code": "20020", "ScaleCat": None},
+            base | {"Code": "30030"},
+        ]
+    )
+    cats = dict(zip(m["symbol"], m["scale_category"], strict=True))
+    assert cats["10010"] == "TOPIX Core30"
+    assert cats["20020"] is None or pd.isna(cats["20020"])
+    assert cats["30030"] is None or pd.isna(cats["30030"])

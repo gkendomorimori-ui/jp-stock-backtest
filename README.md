@@ -186,6 +186,7 @@ python scripts/compare_runs.py results/runs/<前回のrun_id>   # 最新の実�
 | `trades.csv` | 取引履歴 |
 | `equity_curve.csv` | 日ごとの資産推移（現金・保有評価額） |
 | `orders.csv` | 買い注文の一覧（約定・取消とその理由） |
+| `sell_unfilled.csv` | 約定しなかった売りの試行（ストップ安・売買不成立。実行モデル v2） |
 | `unresolved_events.csv` | 要確認の事象（上場廃止など）があった場合のみ |
 
 ## 5年分のデータ（Light プラン）
@@ -197,10 +198,14 @@ python scripts/download_data.py --start 2021-09-29 --end 2026-09-28 --min-interv
 python scripts/process_data.py --start 2021-09-29 --end 2026-09-28
 python scripts/check_periods.py                   # 取引所カレンダーで区間の営業日数を照合
 python scripts/check_data_quality.py              # 全期間のデータ品質確認（戦略の成績は計算しない）
-python scripts/run_backtest.py --period development
+python scripts/run_backtest.py --period development                        # 実行モデル v2（基準）
 python scripts/verify_run.py                      # 整合性チェック
 python scripts/breakdown_trades.py                # 補助的な内訳（10円未満 / +100%超 / どちらでもない）
+python scripts/run_backtest.py --period development --execution-model v1   # 診断用の v1
+python scripts/compare_execution_models.py results/runs/<v1の実行> results/runs/<v2の実行>
 ```
+
+約定モデルは [docs/EXECUTION_MODEL.md](docs/EXECUTION_MODEL.md)（v2 が基準。呼値はその日の制度と銘柄区分で決める、ストップ高・安は日足からの厳しめの仮定、売り要求の持ち越し）。v2 には加工済みデータの `UL`/`LL`・`ScaleCat` が必要なので、2026-09-29 より前に加工したデータは `process_data.py` をやり直す。
 
 `run_backtest.py` は、最終評価用・追加確認用の区間や、区間をまたぐ期間の実行を拒否する。
 

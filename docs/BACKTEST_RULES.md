@@ -83,7 +83,7 @@ Execution at Day T+1
 - `trades.csv` — 取引履歴
 - `equity_curve.csv` — 日次の資産推移
 
-を保存する。あわせて `orders.csv`（買い注文と約定・取消の結果）を保存する。`status = needs_review` の場合は `unresolved_events.csv` も保存する。
+を保存する。あわせて `orders.csv`（買い注文と約定・取消の結果）と `sell_unfilled.csv`（約定しなかった売りの試行。実行モデル v2）を保存する。`status = needs_review` の場合は `unresolved_events.csv` も保存する。`summary.json` には `execution_model_version`（v1 / v2。[docs/EXECUTION_MODEL.md](EXECUTION_MODEL.md)）を記録する。
 
 ### trades.csv（暫定カラム）
 
@@ -94,7 +94,7 @@ Execution at Day T+1
 | entry_date | 約定日（エントリー） |
 | entry_price | 約定価格（スリッページ込み） |
 | exit_date | 約定日（イグジット） |
-| exit_price | 約定価格（スリッページ込み） |
+| exit_price | スリッページ後の価格（モデル上の実効価格。実際に観測した約定価格ではない） |
 | quantity | 株数 |
 | commission | 往復手数料 |
 | pnl | 損益（コスト控除後） |
@@ -104,6 +104,16 @@ Execution at Day T+1
 | exit_phase | 決済の時点：`open`（寄付）/ `intraday`（日中）/ `close`（引け） |
 | intraday_both_touched | 決済日の日中の値幅（安値 ≤ 損切り水準 かつ 高値 ≥ 利確水準）が両方の水準に届いたか。**寄付で決済した取引は空欄**（日中の値幅で判定する前に決済済みのため）。引けの決済は、日中の判定をしてどちらにも届かなかったので `False` |
 | stop_priority_applied | 損切り優先のルールで結果が決まったか（両方に届き、損切りで決済した）。寄付の決済は空欄 |
+| trigger_date / trigger_phase | 決済の条件を満たした日・時点（売り要求ができた時）。持ち越した場合は exit_date / exit_phase と異なる |
+| trigger_level | 発動水準（利確・損切りの水準。価格ではない）。保有期限・期間終了は空欄 |
+| order_price | 利確の指値（発動水準を呼値に切り上げた価格。v2 のみ）。損切り（成行）・引けは空欄 |
+| base_price | スリッページをかける前の、モデル上の約定価格 |
+| tick_class / tick_size | 水準を呼値に合わせたときの表（`fine` / `standard` / 区分不明は `unknown`）と刻み（v2 の日中の決済） |
+| tick_rounded | 基準価格が発動水準と異なる（呼値に合わせた）か |
+| carried_days | 発動日から実際に売った日までの営業日数（0 = 同じ日） |
+| last_unfilled_cause | 売る前の最後の未約定の原因（`limit_down_open` / `limit_down_all_day` / `limit_down_close` / `no_trade`） |
+
+`intraday_both_touched` と `stop_priority_applied` は発動日の値。寄付で発動した決済は空欄。
 
 `intraday_both_touched`（両方に届いた）と `stop_priority_applied`（ルールを実際に適用した）は、意味の違う別の項目として記録する。現在の処理では、日中に両方に届けば必ず損切り優先で決済するので、2つの件数は一致する。今後ルールが変わっても区別できるように、分けて残している。
 
@@ -115,6 +125,7 @@ Execution at Day T+1
 | `not_placed_unaffordable` | 予算（総資産の20%）で100株を買えないため、発注しなかった |
 | `cancelled_no_slot` | T+1 の寄付で空き枠がなく取消 |
 | `cancelled_not_tradable` | T+1 に売買が成立しておらず取消 |
+| `cancelled_limit_up` | T+1 にストップ高で寄り付き（`UL = 1` かつ 始値 = 高値）、約定しないとみなして取消（v2。持ち越さない） |
 | `cancelled_insufficient_funds` | 減額しても0株になり取消 |
 | `filled` | 購入 |
 

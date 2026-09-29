@@ -31,6 +31,10 @@ def bar(s: dict[str, list[Any]], i: int, o: float, h: float, lo: float, c: float
 
 
 def build() -> Any:
+    return make_data(DAYS, build_series())
+
+
+def build_series() -> dict[str, dict[str, list[Any]]]:
     # A: breakout on day 22 (close 1010 > 20-day high 1000, volume 2x) -> buy day 23 open,
     #    take profit intraday on day 25.
     a = series(1000, 200_000)
@@ -49,16 +53,19 @@ def build() -> Any:
     # D: preferred share code (suffix 5) with a breakout -> not eligible.
     d = series(1000, 200_000)
     bar(d, 22, 1000, 1010, 1000, 1010, 400_000)
-    return make_data(DAYS, {"10010": a, "20020": b, "30030": c, "25935": d})
+    return {"10010": a, "20020": b, "30030": c, "25935": d}
 
 
-def hand_calculation() -> dict[str, float]:
+def hand_calculation(model: str = "v2") -> dict[str, float]:
+    """Hand calculation. ``v2``: A's take profit fills at the level rounded UP to a valid tick
+    (ScaleCat "-" -> standard table, tick 1 yen at ~1,112 yen): 1,112.111 -> 1,113."""
     e0 = 1_500_000.0
     # A: planned at day-22 close 1010 with budget 0.2*1.5M
     qa = int(0.2 * e0 / (1010 * (1 + S) * (1 + C)) // 100) * 100  # 200
     pa = 1010 * (1 + S)  # entry 1011.01
     cost_a = qa * pa * (1 + C)
-    tp_a = pa * 1.10
+    tp_a = pa * 1.10 if model == "v1" else 1113.0
+    assert model == "v1" or 1112 < pa * 1.10 < 1113
     proceeds_a = qa * tp_a * (1 - S) * (1 - C)
     # B: planned at day-24 close; equity = cash + A valued at 1010
     e24 = e0 - cost_a + qa * 1010
@@ -76,8 +83,13 @@ def hand_calculation() -> dict[str, float]:
     }
 
 
+@pytest.fixture(params=["v1", "v2"])
+def model(request: pytest.FixtureRequest) -> str:
+    return str(request.param)
+
+
 @pytest.fixture
-def run_dir(tmp_path: Path) -> Path:
+def run_dir(tmp_path: Path, model: str) -> Path:
     out, _ = run_high_price_breakout(
         build(),
         load_yaml("config/backtest.yaml"),
@@ -87,17 +99,24 @@ def run_dir(tmp_path: Path) -> Path:
         eval_end=DAYS[EVAL_END],
         run_type="smoke_test",
         results_root=tmp_path,
+        execution_model=model,
     )
     return out
 
 
 def test_output_files(run_dir: Path) -> None:
     names = {p.name for p in run_dir.iterdir()}
-    assert names == {"summary.json", "trades.csv", "equity_curve.csv", "orders.csv"}
+    assert names == {
+        "summary.json",
+        "trades.csv",
+        "equity_curve.csv",
+        "orders.csv",
+        "sell_unfilled.csv",
+    }
 
 
-def test_trades_match_hand_calculation(run_dir: Path) -> None:
-    h = hand_calculation()
+def test_trades_match_hand_calculation(run_dir: Path, model: str) -> None:
+    h = hand_calculation(model)
     trades = pd.read_csv(run_dir / "trades.csv", dtype={"symbol": str})
     assert trades["symbol"].tolist() == ["10010", "20020"]
     assert trades["exit_reason"].tolist() == ["take_profit", "end_of_test"]
@@ -108,8 +127,8 @@ def test_trades_match_hand_calculation(run_dir: Path) -> None:
     assert trades["pnl"].tolist() == pytest.approx([h["pnl_a"], h["pnl_b"]])
 
 
-def test_cash_and_valuation_match_hand_calculation(run_dir: Path) -> None:
-    h = hand_calculation()
+def test_cash_and_valuation_match_hand_calculation(run_dir: Path, model: str) -> None:
+    h = hand_calculation(model)
     eq = pd.read_csv(run_dir / "equity_curve.csv")
     assert len(eq) == EVAL_END - EVAL_START + 1
     assert eq["date"].iloc[0] == str(DAYS[EVAL_START])
@@ -124,8 +143,8 @@ def test_cash_and_valuation_match_hand_calculation(run_dir: Path) -> None:
     assert day25["equity"] == pytest.approx(day25["cash"] + day25["position_value"])
 
 
-def test_summary(run_dir: Path) -> None:
-    h = hand_calculation()
+def test_summary(run_dir: Path, model: str) -> None:
+    h = hand_calculation(model)
     s = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
     meta = s["metadata"]
     assert meta["run_type"] == "smoke_test"
@@ -138,12 +157,28 @@ def test_summary(run_dir: Path) -> None:
     assert bench["status"] == "unavailable" and "Free plan" in bench["unavailable_reason"]
     m = s["metrics"]
     assert m["final_equity"] == pytest.approx(h["final"])
+    assert s["execution_model_version"] == model
+    assert s["stats"]["execution_model_version"] == model
     assert m["total_return"] == pytest.approx(h["final"] / 1_500_000 - 1)
     assert m["number_of_trades"] == 2
     # only A and B were eligible signals; C (turnover) and D (preferred) were not
     assert s["stats"]["signals"] == 2
     assert s["stats"]["orders"] == {"filled": 2}
     assert s["data"]["warmup_trading_days_before_start"] == 20
+
+
+def test_v2_price_fields(run_dir: Path, model: str) -> None:
+    """Trigger level, order price, base price and effective price are kept apart."""
+    t = pd.read_csv(run_dir / "trades.csv", dtype={"symbol": str}).iloc[0]
+    level = 1010 * (1 + S) * 1.10
+    assert t["trigger_level"] == pytest.approx(level)
+    if model == "v2":
+        assert t["order_price"] == 1113 and t["base_price"] == 1113
+        assert t["tick_class"] == "standard" and t["tick_size"] == 1
+        assert bool(t["tick_rounded"]) is True
+    else:
+        assert pd.isna(t["order_price"]) and t["base_price"] == pytest.approx(level)
+    assert t["exit_price"] == pytest.approx(t["base_price"] * (1 - S))
 
 
 def test_warmup_shorter_than_window_is_rejected(tmp_path: Path) -> None:
@@ -252,3 +287,67 @@ def test_topix_missing_day_makes_benchmark_unavailable(tmp_path: Path) -> None:
     assert DAYS[EVAL_START + 3].isoformat() in bench["unavailable_reason"]
     assert bench["total_return"] is None
     assert pd.read_csv(out / "equity_curve.csv")["benchmark_equity"].isna().all()
+
+
+def test_v2_carried_stop_passes_verify(tmp_path: Path) -> None:
+    """B opens at the lower limit below its stop on day 30 -> sold at the day-31 open."""
+    from src.evaluation.verify import verify_run
+
+    data_series = build_series()
+    b = data_series["20020"]
+    b["ll"] = ["0"] * N
+    b["ll"][30] = "1"
+    bar(b, 30, 470, 480, 470, 475, 400_000)
+    bar(b, 31, 490, 495, 485, 490, 400_000)
+    out, result = run_high_price_breakout(
+        make_data(DAYS, data_series),
+        load_yaml("config/backtest.yaml"),
+        load_yaml("config/universe.yaml"),
+        load_yaml("strategies/high_price_breakout.yaml"),
+        eval_start=DAYS[EVAL_START],
+        eval_end=DAYS[EVAL_END],
+        run_type="smoke_test",
+        results_root=tmp_path,
+        execution_model="v2",
+    )
+    t = result.trades.set_index("symbol").loc["20020"]
+    assert t["exit_reason"] == "stop_loss_open" and t["carried_days"] == 1
+    assert t["base_price"] == 490 and t["last_unfilled_cause"] == "limit_down_open"
+    checks, info = verify_run(out)
+    assert [c.name for c in checks if not c.ok] == []
+    assert info["sell_unfilled"] == {"limit_down_open": 1}
+
+
+def test_compare_execution_models(tmp_path: Path) -> None:
+    from src.evaluation.model_diff import ComparisonError, compare_models
+
+    data_series = build_series()
+    b = data_series["20020"]
+    b["ll"] = ["0"] * N
+    b["ll"][30] = "1"
+    bar(b, 30, 470, 480, 470, 475, 400_000)
+    bar(b, 31, 490, 495, 485, 490, 400_000)
+    dirs = {}
+    for model in ("v1", "v2"):
+        dirs[model], _ = run_high_price_breakout(
+            make_data(DAYS, data_series),
+            load_yaml("config/backtest.yaml"),
+            load_yaml("config/universe.yaml"),
+            load_yaml("strategies/high_price_breakout.yaml"),
+            eval_start=DAYS[EVAL_START],
+            eval_end=DAYS[EVAL_END],
+            run_type="smoke_test",
+            results_root=tmp_path / model,
+            execution_model=model,
+        )
+    summary, table = compare_models(dirs["v1"], dirs["v2"])
+    cats = dict(zip(table["symbol"], table["category"], strict=True))
+    # A: same exit day and reason, take-profit price rounded up to 1,113
+    # B: v1 sells at the locked day-30 open, v2 one day later
+    assert cats == {"10010": "same_exit_price_changed", "20020": "exit_changed"}
+    assert summary["first_divergence_date"] == DAYS[25].isoformat()
+    assert summary["v2_rule_applications"]["sell_unfilled"] == {"limit_down_open": 1}
+    assert summary["same_trades_price_only"]["by_exit_reason"]["take_profit"]["trades"] == 1
+    assert "NOT attributed" in summary["note"]
+    with pytest.raises(ComparisonError):
+        compare_models(dirs["v2"], dirs["v2"])

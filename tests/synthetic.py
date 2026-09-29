@@ -43,8 +43,11 @@ def make_data(
     """Build processed data.
 
     ``series[symbol]`` has lists (len == len(days)) for open/high/low/close/volume and
-    optionally ``adj_factor``, ``turnover`` and ``listed`` (bool). ``None`` = no trade.
-    Turnover defaults to close x volume.
+    optionally ``adj_factor``, ``turnover``, ``listed`` (bool), ``ul`` / ``ll`` (raw J-Quants
+    ``UL`` / ``LL`` values, default ``"0"``; the key ``"omit"`` drops the field) and
+    ``scale`` (raw ``ScaleCat``: one value or a list per day, default ``"-"``; ``"omit"``
+    drops the field).
+    ``None`` = no trade. Turnover defaults to close x volume.
     """
     bar_rows, master_rows = raw_rows(days, series, market=market, prodcat=prodcat)
     calendar = pd.DataFrame({"date": pd.to_datetime(days), "hol_div": "1", "is_trading_day": True})
@@ -74,8 +77,18 @@ def raw_rows(
             turnover = s.get("turnover", [None] * len(days))[i]
             if turnover is None and c is not None and v is not None:
                 turnover = c * v
+            flags: dict[str, Any] = {}
+            for key, field in (("ul", "UL"), ("ll", "LL")):
+                vals = s.get(key, ["0"] * len(days))
+                if vals != "omit":
+                    flags[field] = vals[i]
+            scale = s.get("scale", "-")
+            if isinstance(scale, str) and scale != "omit":
+                scale = [scale] * len(days)
+            extra_m: dict[str, Any] = {} if scale == "omit" else {"ScaleCat": scale[i]}
             bar_rows.append(
-                {
+                flags
+                | {
                     "Date": d.isoformat(),
                     "Code": sym,
                     "O": s["open"][i],
@@ -97,6 +110,7 @@ def raw_rows(
                     "MktNm": "x",
                     "ProdCat": prodcat.get(sym, "011"),
                 }
+                | extra_m
             )
     return bar_rows, master_rows
 

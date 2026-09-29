@@ -15,8 +15,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.backtest.ticks import FINE_TABLE, KNOWN_SCALE_CATEGORIES, REGIMES, STANDARD_TABLE
 from src.data.market_data import MarketData
-from src.data.processing import ProcessedData
+from src.data.processing import LIMIT_FLAG_COLUMNS, ProcessedData
 from src.universe import UniverseRules, eligibility, security_eligible
 
 PRICE = ["open", "high", "low", "close"]
@@ -355,7 +356,152 @@ def check_quality(
                 {"first": str(t["date"].min().date()), "last": str(t["date"].max().date())},
             )
         )
+
+    # 10-12. execution model v2 inputs ------------------------------------------------------
+    out.extend(execution_inputs_findings(bars, master, rules))
     return out
+
+
+def execution_inputs_findings(
+    bars: pd.DataFrame, master: pd.DataFrame, rules: UniverseRules
+) -> list[Finding]:
+    """UL/LL flags, ScaleCat and the point-in-time tick grid (execution model v2).
+
+    The tick grid check verifies the regime assumption against the data: every traded
+    O/H/L/C of a target-market common stock should lie on the grid of the table that
+    applies that day (fine table: TOPIX100 before 2023-06-05, TOPIX500 from then).
+    """
+    out: list[Finding] = []
+    if not set(LIMIT_FLAG_COLUMNS) <= set(bars.columns) or "scale_category" not in master:
+        out.append(
+            Finding(
+                "ERROR",
+                "execution_inputs",
+                "UL/LL or ScaleCat not in processed data -- re-run scripts/process_data.py "
+                "(needed by execution model v2)",
+            )
+        )
+        return out
+    traded = bars.dropna(subset=PRICE)
+    flags: dict[str, Any] = {}
+    missing_traded = 0
+    for col in LIMIT_FLAG_COLUMNS:
+        miss = int(traded[col].isna().sum())
+        missing_traded += miss
+        flags[col] = {
+            "ones": int((bars[col] == 1.0).sum()),
+            "missing_on_traded_rows": miss,
+            "missing_on_no_trade_rows": int(bars.loc[bars["close"].isna(), col].isna().sum()),
+        }
+    ul_open = traded[(traded["upper_limit"] == 1.0) & (traded["open"] == traded["high"])]
+    ll_open = traded[(traded["lower_limit"] == 1.0) & (traded["open"] == traded["low"])]
+    ll_close = traded[(traded["lower_limit"] == 1.0) & (traded["close"] == traded["low"])]
+    flags["rows_open_at_upper_limit"] = len(ul_open)
+    flags["rows_open_at_lower_limit"] = len(ll_open)
+    flags["rows_close_at_lower_limit"] = len(ll_close)
+    out.append(
+        Finding(
+            "ERROR" if missing_traded else "INFO",
+            "limit_flags",
+            f"UL=1 rows {flags['upper_limit']['ones']}, LL=1 rows "
+            f"{flags['lower_limit']['ones']}; missing on traded rows: {missing_traded}",
+            flags,
+        )
+    )
+
+    m = master[["date", "symbol", "market_code", "product_category", "scale_category"]]
+    target = m[
+        m["market_code"].isin(rules.market_codes)
+        & m["product_category"].isin(rules.product_categories)
+        & (m["symbol"].str[4] == rules.common_stock_code_suffix)
+    ]
+    cat = target["scale_category"]
+    unknown = target[cat.isna() | ~cat.isin(KNOWN_SCALE_CATEGORIES)]
+    out.append(
+        Finding(
+            "WARN" if len(unknown) else "INFO",
+            "scale_category",
+            f"target common-stock rows {len(target)}; ScaleCat missing or unknown: "
+            f"{len(unknown)} rows / {unknown['symbol'].nunique()} symbols",
+            {
+                "counts": {str(k): int(v) for k, v in cat.value_counts(dropna=False).items()},
+                "unknown_examples": _records(unknown.head(10)),
+            },
+        )
+    )
+
+    rows = traded.merge(target[["date", "symbol", "scale_category"]], on=["date", "symbol"])
+    grid: list[dict[str, Any]] = []
+    examples: list[dict[str, Any]] = []
+    total_off = 0
+    for regime in REGIMES:
+        r = rows[(rows["date"] >= regime.start) & (rows["date"] <= regime.end)]
+        if r.empty:
+            continue
+        cats_known = r["scale_category"].isin(KNOWN_SCALE_CATEGORIES)
+        fine = r["scale_category"].isin(regime.fine_categories)
+        for cls, mask, table in (
+            ("fine", fine, FINE_TABLE),
+            ("standard", cats_known & ~fine, STANDARD_TABLE),
+        ):
+            sub = r[mask]
+            off = pd.Series(False, index=sub.index)
+            for col in PRICE:
+                off |= ~_on_grid(sub[col].to_numpy(dtype=float), table)
+            # evidence that the fine table is really used: prices off the standard grid
+            finer = pd.Series(False, index=sub.index)
+            if cls == "fine":
+                for col in PRICE:
+                    finer |= ~_on_grid(sub[col].to_numpy(dtype=float), STANDARD_TABLE)
+            n_off = int(off.sum())
+            total_off += n_off
+            grid.append(
+                {
+                    "regime": regime.label,
+                    "class": cls,
+                    "rows": len(sub),
+                    "off_grid_rows": n_off,
+                    "rows_off_standard_grid": int(finer.sum()) if cls == "fine" else None,
+                    "by_scale_category": {
+                        str(k): int(v) for k, v in sub["scale_category"].value_counts().items()
+                    },
+                }
+            )
+            if n_off:
+                examples += _records(sub[off].head(5)[["date", "symbol", "scale_category", *PRICE]])
+    mid = rows[rows["scale_category"] == "TOPIX Mid400"]
+    change = pd.Timestamp("2023-06-05")
+    mid_frac = {
+        side: int((~pd.Series(_on_grid(sub["close"].to_numpy(dtype=float), STANDARD_TABLE))).sum())
+        for side, sub in (
+            ("before", mid[mid["date"] < change]),
+            ("after", mid[mid["date"] >= change]),
+        )
+    }
+    out.append(
+        Finding(
+            "WARN" if total_off else "INFO",
+            "tick_grid",
+            f"traded O/H/L/C off the point-in-time tick grid: {total_off} rows; TOPIX Mid400 "
+            f"closes off the standard grid before / from 2023-06-05: {mid_frac['before']} / "
+            f"{mid_frac['after']}",
+            {"by_regime_and_class": grid, "examples": examples[:20]},
+        )
+    )
+    return out
+
+
+def _on_grid(prices: np.ndarray, table: tuple[tuple[float, float], ...]) -> np.ndarray:
+    """Vectorized: price is a multiple of its band's tick (NaN counts as on the grid)."""
+    tick = np.full(prices.shape, np.nan)
+    lower = 0.0
+    for bound, t in table:
+        band = (prices > lower * (1 + 1e-9)) & (prices <= bound * (1 + 1e-9))
+        tick[band] = t
+        lower = bound
+    q = prices / tick
+    ok = np.abs(q - np.round(q)) <= 1e-6 * np.maximum(1.0, np.abs(q))
+    return np.asarray(ok | np.isnan(prices), dtype=bool)
 
 
 def _snapshot_days(tdays: pd.DatetimeIndex) -> list[tuple[str, pd.Timestamp]]:

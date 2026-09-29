@@ -83,6 +83,17 @@ def test_process_and_run_scripts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert summary["metadata"]["run_type"] == "smoke_test"
     assert summary["metrics"]["final_equity"] == pytest.approx(hand_calculation()["final"])
     assert any("Smoke test" in n for n in summary["metadata"]["notes"])
+    assert summary["execution_model_version"] == "v2"  # config default
+
+    # diagnostic v1 run with the same data and settings, then the model comparison
+    assert run.main(["--smoke", "--execution-model", "v1"]) == 0
+    v1_dir = next(d for d in (tmp_path / "results" / "runs").iterdir() if d != runs[0])
+    s1 = json.loads((v1_dir / "summary.json").read_text(encoding="utf-8"))
+    assert s1["execution_model_version"] == "v1"
+    assert s1["metrics"]["final_equity"] == pytest.approx(hand_calculation("v1")["final"])
+    cmp = _load("compare_execution_models")
+    assert cmp.main([str(v1_dir), str(runs[0])]) == 0
+    assert (runs[0] / "model_comparison.json").exists()
 
 
 def test_process_fails_when_a_day_is_missing(

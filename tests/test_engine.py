@@ -27,6 +27,7 @@ P = ExecutionParams(
     take_profit_pct=0.10,
     stop_loss_pct=0.05,
     max_holding_days=20,
+    model_version="v1",  # these tests pin the v1 rules (diagnostic model)
 )
 
 

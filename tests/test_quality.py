@@ -105,3 +105,55 @@ def test_move_where_api_disagrees_is_a_warning() -> None:
     f = by_check(check_quality(data, RULES, KNOWN))
     assert f["large_moves"].level == "WARN"
     assert "api_adjusted_disagrees" in f["large_moves"].message
+
+
+# ------------------------------------------------------------------ execution model v2 inputs
+
+from src.data.quality import execution_inputs_findings  # noqa: E402
+
+REGIME_DAYS = weekdays(date(2023, 5, 22), 20)  # spans 2023-06-05
+
+
+def v2_findings(series: dict[str, dict[str, object]]) -> dict[str, Finding]:
+    data = make_data(REGIME_DAYS, series)  # type: ignore[arg-type]
+    return by_check(execution_inputs_findings(data.bars, data.master, RULES))
+
+
+def mid400(price_before: float, price_after: float) -> dict[str, object]:
+    s = flat(20, price_before)
+    k = REGIME_DAYS.index(date(2023, 6, 5))
+    for col in ("open", "high", "low", "close"):
+        s[col][k:] = [price_after] * (20 - k)
+    s["scale"] = "TOPIX Mid400"
+    return s  # type: ignore[return-value]
+
+
+def test_tick_grid_follows_the_2023_06_05_regime() -> None:
+    # integer prices before, 0.1-yen prices after: consistent with the regimes
+    f = v2_findings({"10010": mid400(1000.0, 999.9)})
+    assert f["tick_grid"].level == "INFO"
+    assert "before / from 2023-06-05: 0 / " in f["tick_grid"].message
+    assert f["limit_flags"].level == "INFO" and f["scale_category"].level == "INFO"
+
+
+def test_fractional_price_before_2023_06_05_is_off_grid() -> None:
+    f = v2_findings({"10010": mid400(999.9, 999.9)})
+    assert f["tick_grid"].level == "WARN"
+    assert f["tick_grid"].details["examples"][0]["symbol"] == "10010"
+
+
+def test_missing_flags_and_unknown_category_are_reported() -> None:
+    s = flat(20, 1000)
+    s["ul"] = ["0"] * 19 + [None]
+    s["scale"] = ["-"] * 19 + [None]
+    f = v2_findings({"10010": s})
+    assert f["limit_flags"].level == "ERROR"
+    assert f["limit_flags"].details["upper_limit"]["missing_on_traded_rows"] == 1
+    assert f["scale_category"].level == "WARN"
+
+
+def test_old_processed_data_is_an_error() -> None:
+    data = make_data(REGIME_DAYS, {"10010": flat(20, 1000)})
+    bars = data.bars.drop(columns=["upper_limit", "lower_limit"])
+    f = by_check(execution_inputs_findings(bars, data.master, RULES))
+    assert f["execution_inputs"].level == "ERROR"

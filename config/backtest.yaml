@@ -74,6 +74,11 @@ execution:
   signal_timing: close_of_day_t   # fixed rule (docs/BACKTEST_RULES.md)
   execution_lag_days: 1           # fixed rule: orders created at T close execute from T+1
   execution_price: open           # default entry price: T+1 open (strategy spec may define exits)
+  # Execution model (docs/EXECUTION_MODEL.md). v2 = base model from 2026-09-29: point-in-time
+  # tick rounding of intraday exits, limit-up / limit-down non-fills, persistent sell
+  # requests. v1 = previous model, kept only for the diagnostic comparison
+  # (scripts/run_backtest.py --execution-model v1).
+  model_version: v2
 
 evaluation:
   trading_days_per_year: 252

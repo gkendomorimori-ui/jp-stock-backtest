@@ -33,6 +33,7 @@ class BacktestConfig:
     dividends_included: bool = False
     execution_lag_days: int = 1
     execution_price: str | None = None
+    execution_model_version: str | None = None
     trading_days_per_year: int | None = None
     risk_free_rate: float | None = None
     random_seed: int | None = None
@@ -71,6 +72,7 @@ class BacktestConfig:
             dividends_included=evaluation.get("dividends_included", False),
             execution_lag_days=execution.get("execution_lag_days", 1),
             execution_price=execution.get("execution_price"),
+            execution_model_version=execution.get("model_version"),
             trading_days_per_year=evaluation.get("trading_days_per_year"),
             risk_free_rate=evaluation.get("risk_free_rate"),
             random_seed=repro.get("random_seed"),

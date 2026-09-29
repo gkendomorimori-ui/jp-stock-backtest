@@ -19,7 +19,7 @@
 | 1. 取得できる期間の確認 | 完了（2021-09-29 〜 2026-09-28） |
 | 2. 期間を日付で固定 | 完了（4章。成績を見る前に記録） |
 | 3. 5年分の取得・品質確認・TOPIX 比較処理 | 完了（[品質確認の記録](data_quality/2026-09-29_jquants_light_5y.md)。エラー・警告 0件） |
-| 4. 開発用期間での基準戦略・感度分析 | 未着手。実行前に約定モデルを確認中（[EXECUTION_MODEL.md](EXECUTION_MODEL.md)） |
+| 4. 開発用期間での基準戦略・感度分析 | 未着手。約定モデル v2 を採用・実装済み（[EXECUTION_MODEL.md](EXECUTION_MODEL.md)）。次は加工のやり直し → 品質確認 → 開発用期間で v1・v2 を実行して比較 → v2 で基準の確認 |
 
 ## 2. 閲覧済みの期間
 
@@ -131,6 +131,7 @@
 
 共通のルール：
 
+- 約定モデルは **v2**（基準モデル）で行う
 - 基準戦略の設定・パラメータは変えない。変えるのは、各分析で指定した**1つの条件だけ**
 - A と B は別々に行い、**2つの条件を同時に変えない**
 - どれも、取引の損益だけを書き換えるのではなく、**資金・株数・その後の売買を含めて最初から再実行する**
@@ -180,7 +181,7 @@
 最終評価を開く直前に `docs/final_evaluation_freeze.md`（仮）を作り、commit してから実行する。
 
 - コード：git commit hash（未コミットの変更がないこと）
-- 設定：config/backtest.yaml、config/universe.yaml、strategies/high_price_breakout.yaml の内容（またはハッシュ値）
+- 設定：config/backtest.yaml、config/universe.yaml、strategies/high_price_breakout.yaml の内容（またはハッシュ値）。約定モデルの版（`execution.model_version`）を含む
 - 戦略仕様：strategies/high_price_breakout.md のバージョン
 - 使用データ：加工済みデータの manifest.json（期間・行数・分割の件数など）と、各ファイルのハッシュ値
 - 評価項目：docs/BACKTEST_RULES.md の評価指標すべて、TOPIX（価格指数）との比較、年ごとの成績、決済理由の内訳、購入に至らなかったシグナルの内訳
@@ -193,3 +194,4 @@
 | 1 | ~~期間の分け方~~ | **確定**：案1（4章） |
 | 2 | ~~開発用・最終評価用の正確な日付~~ | **確定**（4章）。取得後に取引所カレンダーで照合し直す |
 | 3 | 無作為な順の具体的な作り方 | 感度分析 B の実装時（実行前） |
+| 4 | スリッページ「0.1% と 1呼値の大きい方」を感度分析 C として事前登録するか（[EXECUTION_MODEL.md](EXECUTION_MODEL.md) 4章） | 開発用期間の結果を見る前 |

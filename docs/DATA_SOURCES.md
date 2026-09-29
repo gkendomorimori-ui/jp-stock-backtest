@@ -58,7 +58,7 @@ Backtest Engine
 | `Va` | 売買代金（円） | 流動性フィルタ |
 | `AdjO`, `AdjH`, `AdjL`, `AdjC`, `AdjVo` | 分割・併合を調整した値 | シグナル計算 |
 | `AdjFactor` | 調整係数。権利落ち日に値が入る（1:2 分割なら `0.5`） | 保有株数・価格の調整 |
-| `UL`, `LL` | ストップ高・ストップ安のフラグ | 今は使わない |
+| `UL`, `LL` | ストップ高・ストップ安のフラグ（文字列 `"0"`/`"1"`）。その日の**高値（安値）**が制限値幅の上限（下限）に一度でも達したら `"1"`。終値で判定したものではない | 約定の再現だけ（実行モデル v2）。シグナルには使わない |
 
 - 取引が成立しなかった日（無約定・終日売買停止など）は、四本値・出来高・売買代金が **null** になる。バックテストではこの日を「約定不可」として扱う
 - 上場廃止銘柄も、データ格納期間内であれば上場していた期間のデータを取得できる
@@ -158,6 +158,7 @@ Backtest Engine
 | `adj_factor` | 調整係数（下記） | `AdjFactor` |
 | `adj_open` 〜 `adj_close`、`adj_volume` | **調整後**の四本値・出来高。このプロジェクトで**再計算**した値（下記） | 実際の値と `adj_factor` から計算 |
 | `api_adj_close` | API の `AdjC`。参照用で、計算には使わない | `AdjC` |
+| `upper_limit` `lower_limit` | ストップ高・安のフラグ（1.0 / 0.0）。`"0"`/`"1"` 以外（欠損・空文字・想定外の値）は **NaN のまま**（0 で埋めない）。約定の再現だけに使う | `UL` `LL` |
 
 ### 調整係数の意味・適用日・方向
 
@@ -192,9 +193,11 @@ Backtest Engine
 
 ### master.parquet・calendar.parquet
 
-- `master.parquet`：`date, symbol, name, market_code, market_name, product_category`（日ごとの銘柄マスタ）
+- `master.parquet`：`date, symbol, name, market_code, market_name, product_category, scale_category`（日ごとの銘柄マスタ）
+  - `scale_category` = `ScaleCat`（その日時点の規模区分：`TOPIX Core30` / `TOPIX Large70` / `TOPIX Mid400` / `TOPIX Small 1` / `TOPIX Small 2` / `-`）。欠けていれば空のまま。呼値の表の判定に使う（[EXECUTION_MODEL.md](EXECUTION_MODEL.md) 3.1）
 - `calendar.parquet`：`date, hol_div, is_trading_day`（東証の営業日 = `hol_div` が 1 または 2）
-- `manifest.json`：期間、行数、分割・併合の件数、四本値の不整合件数など
+- `manifest.json`：期間、行数、分割・併合の件数、四本値の不整合件数、`limit_flags`（`UL`/`LL` の件数と、取引のある行での欠損件数）、`scale_category_missing_rows` など
+- `upper_limit` / `lower_limit` / `scale_category` は 2026-09-29 に追加した。それ以前に加工したデータには無いので、`scripts/process_data.py` をやり直す（生データの取り直しは不要。生データには元から含まれている）
 
 ## 品質確認の記録
 

@@ -21,6 +21,8 @@ WIDE_FIELDS: tuple[str, ...] = (
     "adj_close",
     "adj_volume",
 )
+#: Optional bar columns (absent in data processed before execution model v2).
+OPTIONAL_WIDE_FIELDS: tuple[str, ...] = ("upper_limit", "lower_limit")
 
 
 @dataclass
@@ -36,12 +38,15 @@ class MarketData:
         fields: Wide tables for :data:`WIDE_FIELDS`.
         market_code: Wide table of master ``market_code`` (None if not listed that day).
         product_category: Wide table of master ``product_category``.
+        scale_category: Wide table of master ``scale_category`` (None when the processed
+            data predates the column).
     """
 
     dates: pd.DatetimeIndex
     fields: dict[str, pd.DataFrame]
     market_code: pd.DataFrame
     product_category: pd.DataFrame
+    scale_category: pd.DataFrame | None = None
 
     @classmethod
     def from_processed(cls, data: ProcessedData) -> MarketData:
@@ -54,12 +59,28 @@ class MarketData:
             f: data.bars.pivot(index="date", columns="symbol", values=f).reindex(
                 index=dates, columns=symbols
             )
-            for f in WIDE_FIELDS
+            for f in WIDE_FIELDS + OPTIONAL_WIDE_FIELDS
+            if f in data.bars.columns
         }
         master = data.master.set_index(["date", "symbol"])
         mkt = master["market_code"].unstack().reindex(index=dates, columns=symbols)
         prod = master["product_category"].unstack().reindex(index=dates, columns=symbols)
-        return cls(dates=dates, fields=fields, market_code=mkt, product_category=prod)
+        scale = (
+            master["scale_category"].unstack().reindex(index=dates, columns=symbols)
+            if "scale_category" in master.columns
+            else None
+        )
+        return cls(
+            dates=dates,
+            fields=fields,
+            market_code=mkt,
+            product_category=prod,
+            scale_category=scale,
+        )
+
+    def has_fields(self, *names: str) -> bool:
+        """Whether every named wide table exists."""
+        return all(n in self.fields for n in names)
 
     def __getitem__(self, name: str) -> pd.DataFrame:
         """Wide table for a bar field."""

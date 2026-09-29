@@ -25,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.backtest.engine import DataError  # noqa: E402
 from src.backtest.periods import PeriodError, PeriodPlan  # noqa: E402
 from src.backtest.runner import run_high_price_breakout  # noqa: E402
 from src.data.processing import ProcessingError, load_processed  # noqa: E402
@@ -53,6 +54,11 @@ def main(argv: list[str] | None = None) -> int:
         "--open-sealed-period",
         action="store_true",
         help="allow a sealed segment (only after the freeze record)",
+    )
+    p.add_argument(
+        "--execution-model",
+        choices=["v1", "v2"],
+        help="override execution.model_version (v1 only for the diagnostic comparison)",
     )
     p.add_argument("--strategy", default="high_price_breakout", choices=["high_price_breakout"])
     args = p.parse_args(argv)
@@ -123,13 +129,17 @@ def main(argv: list[str] | None = None) -> int:
             run_type=run_type,
             results_root=PROJECT_ROOT / "results" / "runs",
             notes=notes,
+            execution_model=args.execution_model,
         )
-    except ValueError as e:
+    except (ValueError, DataError) as e:
         print(f"ERROR: {e}")
         return 1
 
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
-    print(f"run_type: {run_type}   status: {result.status}   period: {start}..{end}")
+    print(
+        f"run_type: {run_type}   status: {result.status}   period: {start}..{end}   "
+        f"execution model: {summary['execution_model_version']}"
+    )
     print(f"simulated days: {len(result.equity_curve)}   trades: {len(result.trades)}")
     print(f"orders: {summary['stats'].get('orders', {})}")
     if result.status != "complete":

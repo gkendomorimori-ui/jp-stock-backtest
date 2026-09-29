@@ -71,6 +71,19 @@ def make_run_id(strategy_name: str, timestamp: datetime | None = None) -> str:
     return f"{ts}_{strategy_name}"
 
 
+def unique_run_dir(root: Path, run_id: str) -> Path:
+    """``root / run_id``, with ``_2``, ``_3`` ... appended if it already exists.
+
+    Two runs started within the same second must never overwrite each other.
+    """
+    out = root / run_id
+    n = 2
+    while out.exists():
+        out = root / f"{run_id}_{n}"
+        n += 1
+    return out
+
+
 def save_run(
     out_dir: Path,
     metadata: RunMetadata,

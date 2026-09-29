@@ -13,7 +13,7 @@ from src.backtest.engine import BacktestEngine, EngineResult, ExecutionParams
 from src.data.market_data import MarketData
 from src.data.processing import ProcessedData
 from src.evaluation.metrics import cagr, compute_metrics, max_drawdown
-from src.evaluation.report import RunMetadata, make_run_id, save_run
+from src.evaluation.report import RunMetadata, make_run_id, save_run, unique_run_dir
 from src.strategies.high_price_breakout import HighPriceBreakout
 from src.universe import UniverseRules, eligibility
 
@@ -36,8 +36,36 @@ BASE_NOTES: list[str] = [
 ]
 
 
-def execution_params(config: BacktestConfig, strategy_params: dict[str, Any]) -> ExecutionParams:
-    """Combine common config and strategy parameters (nothing hard-coded)."""
+#: Notes per execution model (docs/EXECUTION_MODEL.md).
+MODEL_NOTES: dict[str, list[str]] = {
+    "v1": [
+        "Execution model v1 (diagnostic): intraday exits fill at the stop / take-profit level "
+        "itself; any day with OHLC is treated as tradable.",
+    ],
+    "v2": [
+        "Execution model v2: intraday take profit at the level rounded up to a valid tick; "
+        "intraday stop at the level rounded down to a valid tick (optimistic: a fill further "
+        "below cannot be seen in daily bars). Tick tables are point in time (TOPIX100 fine "
+        "table before 2023-06-05, TOPIX500 from 2023-06-05, by the day's ScaleCat).",
+        "Limit-up / limit-down non-fills are a strict daily-bar ASSUMPTION from the J-Quants "
+        "UL/LL flags and OHLC, not confirmed non-fills; partial (pro-rata) fills are not "
+        "modelled. UL/LL are used only for execution, never for signals, ranking or size.",
+        "Triggered stop-loss and time-exit sell requests persist until executed; after an "
+        "unfilled open sell the request is carried to the next trading day (same-day "
+        "re-execution is not reproduced).",
+    ],
+}
+
+
+def execution_params(
+    config: BacktestConfig,
+    strategy_params: dict[str, Any],
+    model_version: str | None = None,
+) -> ExecutionParams:
+    """Combine common config and strategy parameters (nothing hard-coded).
+
+    ``model_version`` overrides ``execution.model_version`` of the config (diagnostic runs).
+    """
     missing = [
         n
         for n in (
@@ -58,6 +86,9 @@ def execution_params(config: BacktestConfig, strategy_params: dict[str, Any]) ->
     assert config.initial_capital is not None and config.commission_rate is not None
     assert config.slippage_rate is not None and config.lot_size is not None
     assert config.maximum_positions is not None
+    version = model_version or config.execution_model_version
+    if version is None:
+        raise ValueError("config/backtest.yaml execution.model_version is not set")
     return ExecutionParams(
         initial_capital=float(config.initial_capital),
         commission_rate=float(config.commission_rate),
@@ -68,6 +99,7 @@ def execution_params(config: BacktestConfig, strategy_params: dict[str, Any]) ->
         take_profit_pct=float(strategy_params["take_profit_pct"]),
         stop_loss_pct=float(strategy_params["stop_loss_pct"]),
         max_holding_days=int(strategy_params["max_holding_days"]),
+        model_version=str(version),
     )
 
 
@@ -82,6 +114,7 @@ def run_high_price_breakout(
     results_root: Path,
     data_source: str = "jquants_v2",
     notes: list[str] | None = None,
+    execution_model: str | None = None,
 ) -> tuple[Path, EngineResult]:
     """Run the strategy on ``eval_start .. eval_end`` and save the results.
 
@@ -93,7 +126,7 @@ def run_high_price_breakout(
     if (strategy_spec["name"], str(strategy_spec["version"])) != (strategy.name, strategy.version):
         raise ValueError("strategy YAML name/version does not match the implementation")
     rules = UniverseRules.from_config(universe_cfg)
-    params = execution_params(config, strategy.params)
+    params = execution_params(config, strategy.params, execution_model)
 
     md = MarketData.from_processed(data)
     start, end = pd.Timestamp(eval_start), pd.Timestamp(eval_end)
@@ -129,7 +162,7 @@ def run_high_price_breakout(
         benchmark_equity=pd.Series(bench_equity, index=result.equity_curve.index, dtype="float64")
     )
 
-    run_notes = list(BASE_NOTES) + (notes or [])
+    run_notes = list(BASE_NOTES) + list(MODEL_NOTES[params.model_version]) + (notes or [])
     if result.status == "needs_review":
         run_notes.append("Run stopped or ended with unresolved events: results are NOT final.")
     metadata = RunMetadata(
@@ -148,8 +181,9 @@ def run_high_price_breakout(
         benchmark=benchmark,
         notes=run_notes,
     )
-    out_dir = results_root / make_run_id(strategy.name)
+    out_dir = unique_run_dir(results_root, make_run_id(strategy.name))
     sections: dict[str, Any] = {
+        "execution_model_version": params.model_version,
         "stats": result.stats,
         "execution": params.__dict__,
         "data": {
@@ -167,7 +201,7 @@ def run_high_price_breakout(
         equity_curve,
         result.unresolved_events,
         extra_sections=sections,
-        extra_tables={"orders": result.orders},
+        extra_tables={"orders": result.orders, "sell_unfilled": result.sell_unfilled},
     )
     return out_dir, result
 

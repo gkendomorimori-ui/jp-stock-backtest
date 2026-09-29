@@ -23,6 +23,14 @@ Column meanings of ``bars.parquet`` (see docs/DATA_SOURCES.md):
   before D, not D itself. Ratios inside any window (e.g. close vs. 20-day high) do not
   depend on which last date is used, so signals are unaffected by later splits.
 * ``api_adj_close`` -- the API's ``AdjC`` kept for reference only.
+* ``upper_limit`` / ``lower_limit`` -- J-Quants ``UL`` / ``LL`` ("1" if the day's HIGH / LOW
+  reached the daily price limit at least once, "0" otherwise; NOT judged on the close).
+  Stored as 1.0 / 0.0; a missing or unexpected value stays NaN (never filled with 0).
+  Used only to reproduce executions (execution model v2), never for signals.
+
+Master: ``scale_category`` is J-Quants ``ScaleCat`` of that date (point in time):
+``TOPIX Core30``, ``TOPIX Large70``, ``TOPIX Mid400``, ``TOPIX Small 1``, ``TOPIX Small 2``
+or ``-``. Missing stays missing (None); it decides the tick-size table (src/backtest/ticks.py).
 """
 
 from __future__ import annotations
@@ -48,7 +56,11 @@ BAR_FIELD_MAP: dict[str, str] = {
     "Va": "turnover",
     "AdjFactor": "adj_factor",
     "AdjC": "api_adj_close",
+    "UL": "upper_limit",
+    "LL": "lower_limit",
 }
+#: Limit flags: only "0" / "1" (or 0 / 1) are accepted; anything else becomes NaN.
+LIMIT_FLAG_COLUMNS: list[str] = ["upper_limit", "lower_limit"]
 PRICE_COLUMNS: list[str] = ["open", "high", "low", "close"]
 BAR_COLUMNS: list[str] = [
     "date",
@@ -66,6 +78,8 @@ BAR_COLUMNS: list[str] = [
     "adj_close",
     "adj_volume",
     "api_adj_close",
+    "upper_limit",
+    "lower_limit",
 ]
 MASTER_COLUMNS: list[str] = [
     "date",
@@ -74,6 +88,7 @@ MASTER_COLUMNS: list[str] = [
     "market_code",
     "market_name",
     "product_category",
+    "scale_category",
 ]
 
 
@@ -130,13 +145,34 @@ def bars_from_rows(rows: Iterable[dict[str, Any]]) -> pd.DataFrame:
         raise ProcessingError("no daily bars")
     df = pd.DataFrame({"date": pd.to_datetime(raw["Date"]), "symbol": raw["Code"].astype(str)})
     for src, dst in BAR_FIELD_MAP.items():
-        df[dst] = pd.to_numeric(raw[src], errors="coerce") if src in raw else np.nan
+        if dst in LIMIT_FLAG_COLUMNS:
+            df[dst] = _limit_flag(raw[src]) if src in raw else np.nan
+        else:
+            df[dst] = pd.to_numeric(raw[src], errors="coerce") if src in raw else np.nan
     if df.duplicated(["symbol", "date"]).any():
         raise ProcessingError("duplicated (symbol, date) rows in daily bars")
     df["adj_factor"] = df["adj_factor"].fillna(1.0)
     if (df["adj_factor"] <= 0).any():
         raise ProcessingError("non-positive adj_factor")
     return add_adjusted(df)
+
+
+def _limit_flag(values: pd.Series) -> pd.Series:
+    """``"0"/"1"`` (or 0/1) -> 0.0/1.0; anything else (None, "", "x") -> NaN, never 0."""
+
+    def one(v: Any) -> float:
+        nan = float("nan")
+        if v is None or isinstance(v, bool):
+            return nan
+        if isinstance(v, str):
+            return {"0": 0.0, "1": 1.0}.get(v.strip(), nan)
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return nan
+        return f if f in (0.0, 1.0) else nan
+
+    return pd.Series([one(v) for v in values], index=values.index, dtype="float64")
 
 
 def add_adjusted(df: pd.DataFrame) -> pd.DataFrame:
@@ -163,6 +199,9 @@ def master_from_rows(rows: Iterable[dict[str, Any]]) -> pd.DataFrame:
             "market_code": raw["Mkt"].astype(str),
             "market_name": raw.get("MktNm", pd.Series([None] * len(raw))),
             "product_category": raw["ProdCat"].astype(str),
+            "scale_category": raw["ScaleCat"].where(raw["ScaleCat"].notna(), None)
+            if "ScaleCat" in raw
+            else pd.Series([None] * len(raw), dtype="object"),
         }
     )
     if df.duplicated(["symbol", "date"]).any():
@@ -245,6 +284,10 @@ def save_processed(data: ProcessedData, out_dir: Path, extra: dict[str, Any] | N
         "split_events": int((data.bars["adj_factor"] != 1.0).sum()),
         "ohlc_inconsistent_rows": ohlc_violations,
         "adjusted_basis": "recomputed from actual values and adj_factor; basis = last_date",
+        "limit_flags": limit_flag_summary(data.bars),
+        "scale_category_missing_rows": int(data.master["scale_category"].isna().sum())
+        if "scale_category" in data.master
+        else None,
         "topix_rows": None if data.topix is None else len(data.topix),
         "topix_dates_match_trading_days": None
         if data.topix is None
@@ -253,6 +296,22 @@ def save_processed(data: ProcessedData, out_dir: Path, extra: dict[str, Any] | N
     } | (extra or {})
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return out_dir
+
+
+def limit_flag_summary(bars: pd.DataFrame) -> dict[str, Any]:
+    """Counts of UL/LL values; ``missing_on_traded_rows`` must be 0 for execution model v2."""
+    if not set(LIMIT_FLAG_COLUMNS) <= set(bars.columns):
+        return {"present": False}
+    traded = bars.dropna(subset=PRICE_COLUMNS)
+    out: dict[str, Any] = {"present": True}
+    for col in LIMIT_FLAG_COLUMNS:
+        out[col] = {
+            "ones": int((bars[col] == 1.0).sum()),
+            "zeros": int((bars[col] == 0.0).sum()),
+            "missing": int(bars[col].isna().sum()),
+            "missing_on_traded_rows": int(traded[col].isna().sum()),
+        }
+    return out
 
 
 def load_processed(out_dir: Path) -> ProcessedData:
