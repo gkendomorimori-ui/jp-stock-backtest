@@ -145,7 +145,7 @@ J-Quants の `UL` / `LL` は「その日の高値（安値）が制限値幅の�
 ```powershell
 python scripts/run_backtest.py --period development --execution-model v1
 python scripts/run_backtest.py --period development
-python scripts/compare_execution_models.py results/runs/<v1の実行> results/runs/<v2の実行>
+python scripts/compare_execution_models.py --latest   # 最新の v2 と、同じ期間の最新の v1 を比べる
 ```
 
 - v1 は診断用、**v2 を今後の基準モデル**とする。成績の良し悪しでどちらを使うかを選ばない

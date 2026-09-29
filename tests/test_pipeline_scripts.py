@@ -94,6 +94,10 @@ def test_process_and_run_scripts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     cmp = _load("compare_execution_models")
     assert cmp.main([str(v1_dir), str(runs[0])]) == 0
     assert (runs[0] / "model_comparison.json").exists()
+    monkeypatch.setattr(cmp, "PROJECT_ROOT", tmp_path)
+    assert cmp.latest_pair(tmp_path / "results" / "runs") == (v1_dir, runs[0])
+    assert cmp.main(["--latest"]) == 0
+    assert cmp.main([str(tmp_path / "missing"), str(runs[0])]) == 1
 
 
 def test_process_fails_when_a_day_is_missing(

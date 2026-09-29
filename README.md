@@ -202,7 +202,7 @@ python scripts/run_backtest.py --period development                        # 実
 python scripts/verify_run.py                      # 整合性チェック
 python scripts/breakdown_trades.py                # 補助的な内訳（10円未満 / +100%超 / どちらでもない）
 python scripts/run_backtest.py --period development --execution-model v1   # 診断用の v1
-python scripts/compare_execution_models.py results/runs/<v1の実行> results/runs/<v2の実行>
+python scripts/compare_execution_models.py --latest   # 最新の v2 と、同じ期間の最新の v1 を比べる
 ```
 
 約定モデルは [docs/EXECUTION_MODEL.md](docs/EXECUTION_MODEL.md)（v2 が基準。呼値はその日の制度と銘柄区分で決める、ストップ高・安は日足からの厳しめの仮定、売り要求の持ち越し）。v2 には加工済みデータの `UL`/`LL`・`ScaleCat` が必要なので、2026-09-29 より前に加工したデータは `process_data.py` をやり直す。
