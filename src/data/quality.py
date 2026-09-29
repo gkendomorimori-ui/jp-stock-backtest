@@ -141,39 +141,120 @@ def check_quality(
             },
         )
     )
+    md = MarketData.from_processed(data)
+    sec_tbl = security_eligible(md, rules)
+    elig_tbl = eligibility(md, rules)
+
     cmp = traded.dropna(subset=["api_adj_close"])
-    rel = ((cmp["adj_close"] - cmp["api_adj_close"]).abs() / cmp["api_adj_close"]).fillna(0)
-    worst = cmp.assign(rel=rel).nlargest(5, "rel")[
-        ["date", "symbol", "adj_close", "api_adj_close", "rel"]
+    diff = (cmp["adj_close"] - cmp["api_adj_close"]).abs()
+    rel = (diff / cmp["api_adj_close"]).fillna(0)
+    mism = rel > 1e-6
+    by_01 = mism & (diff <= 0.05 + 1e-6)  # API rounds adjusted prices to 0.1 yen
+    by_1 = mism & ~by_01 & (diff <= 0.5 + 1e-6)
+    unexplained = mism & ~by_01 & ~by_1
+    api_on_01_grid = (
+        ((cmp.loc[mism, "api_adj_close"] * 10).round(6) % 1 == 0).mean() if mism.any() else 1.0
+    )
+    worst = cmp.assign(rel=rel, abs_diff=diff)[unexplained if unexplained.any() else mism]
+    worst = worst.nlargest(10, "rel")[
+        ["date", "symbol", "adj_close", "api_adj_close", "abs_diff", "rel"]
     ]
     out.append(
         Finding(
-            "WARN" if (rel > 1e-3).any() else "INFO",
+            "WARN" if unexplained.any() else "INFO",
             "adjustment_vs_api",
             "recomputed adj_close vs API AdjC: "
-            f"{_pct((rel <= 1e-6).sum(), len(rel))}% within 1e-6, "
-            f"{int((rel > 1e-3).sum())} rows differ by >0.1% (max {rel.max():.3g})",
-            {"worst": _records(worst)},
+            f"{_pct((~mism).sum(), len(rel))}% equal (within 1e-6); of {int(mism.sum())} "
+            f"differing rows, {int(by_01.sum())} are within 0.05 yen (0.1-yen rounding), "
+            f"{int(by_1.sum())} within 0.5 yen, {int(unexplained.sum())} unexplained; "
+            f"max relative diff {rel.max():.3g}",
+            {
+                "api_values_on_0.1_yen_grid_among_differing_rows": round(float(api_on_01_grid), 4),
+                "examples": _records(worst),
+            },
         )
     )
 
     # 5. large moves not explained by a split ---------------------------------------------
-    s = traded.sort_values(["symbol", "date"])
-    prev = s.groupby("symbol")["adj_close"].shift(1)
-    ret = s["adj_close"] / prev - 1
-    jumps = s.assign(ret=ret, prev_adj_close=prev)[ret.abs() > jump_threshold]
+    s = traded.sort_values(["symbol", "date"]).copy()
+    g = s.groupby("symbol")
+    s["prev_adj_close"] = g["adj_close"].shift(1)
+    s["prev_close"] = g["close"].shift(1)
+    s["prev_api"] = g["api_adj_close"].shift(1)
+    s["prev_date"] = g["date"].shift(1)
+    s["ret"] = s["adj_close"] / s["prev_adj_close"] - 1
+    jumps = s[s["ret"].abs() > jump_threshold].copy()
+    pos = pd.Series(np.arange(len(tdays)), index=tdays)
+    first_seen_all = master.groupby("symbol")["date"].min()
+    near_split_tbl = (
+        (md["adj_factor"].fillna(1.0) != 1.0)
+        .astype(int)
+        .rolling(11, center=True, min_periods=1)
+        .max()
+        .astype(bool)
+    )
+    names = master.drop_duplicates("symbol", keep="last").set_index("symbol")["name"]
+    cats: list[str] = []
+    rows_out: list[dict[str, Any]] = []
+    records: list[dict[str, Any]] = jumps.to_dict("records")  # type: ignore[assignment]
+    for r in records:
+        d, sym = r["date"], str(r["symbol"])
+        gap = int(pos[d] - pos[r["prev_date"]]) if pd.notna(r["prev_date"]) else 0
+        api_ratio = float(r["api_adj_close"]) / float(r["prev_api"]) if r["prev_api"] else np.nan
+        api_ok = (
+            bool(abs(api_ratio / (1 + float(r["ret"])) - 1) < 0.02)
+            if np.isfinite(api_ratio)
+            else False
+        )
+        in_uni = bool(sec_tbl.at[d, sym]) if sym in sec_tbl.columns else False
+        new_listing = int(pos[d] - pos.get(first_seen_all.get(sym, d), pos[d])) <= 5
+        near_split = bool(near_split_tbl.at[d, sym]) if sym in near_split_tbl.columns else False
+        if not in_uni:
+            cat = "not_in_universe"
+        elif new_listing:
+            cat = "within_5_days_of_listing"
+        elif gap > 1:
+            cat = "after_no_trade_days"
+        elif near_split:
+            cat = "within_5_days_of_split"
+        elif float(r["prev_close"]) < 10:
+            cat = "price_below_10_yen"
+        elif not api_ok:
+            cat = "api_adjusted_disagrees"
+        else:
+            cat = "confirmed_by_api_in_universe"
+        cats.append(cat)
+        if in_uni:
+            rows_out.append(
+                {
+                    "date": d.date().isoformat(),
+                    "symbol": sym,
+                    "name": names.get(sym),
+                    "prev_close": r["prev_close"],
+                    "close": r["close"],
+                    "ret": round(float(r["ret"]), 4),
+                    "category": cat,
+                    "buy_eligible_that_day": bool(elig_tbl.at[d, sym]),
+                }
+            )
+    cat_counts = pd.Series(cats, dtype="object").value_counts().to_dict() if cats else {}
+    suspicious = cat_counts.get("api_adjusted_disagrees", 0) + cat_counts.get(
+        "within_5_days_of_split", 0
+    )
+    rows_out.sort(key=lambda x: -abs(x["ret"]))
     out.append(
         Finding(
-            "WARN" if len(jumps) else "INFO",
+            "WARN" if suspicious else "INFO",
             "large_moves",
             f"{len(jumps)} day-over-day adjusted moves beyond +/-{int(jump_threshold * 100)}% "
-            f"({jumps['symbol'].nunique() if len(jumps) else 0} symbols)",
+            f"({jumps['symbol'].nunique() if len(jumps) else 0} symbols); by category: "
+            f"{ {str(k): int(v) for k, v in cat_counts.items()} }",
             {
-                "largest": _records(
-                    jumps.reindex(jumps["ret"].abs().sort_values(ascending=False).index).head(10)[
-                        ["date", "symbol", "prev_adj_close", "adj_close", "adj_factor", "ret"]
-                    ]
-                )
+                "in_universe": rows_out[:40],
+                "in_universe_count": len(rows_out),
+                "in_universe_buy_eligible_that_day": sum(
+                    x["buy_eligible_that_day"] for x in rows_out
+                ),
             },
         )
     )
@@ -240,9 +321,8 @@ def check_quality(
     )
 
     # 8. universe coverage (eligibility only; no signals, no trades) ----------------------
-    md = MarketData.from_processed(data)
-    sec = security_eligible(md, rules).sum(axis=1)
-    elig = eligibility(md, rules).sum(axis=1)
+    sec = sec_tbl.sum(axis=1)
+    elig = elig_tbl.sum(axis=1)
     rows = []
     for name, a, b in segments or [("all", tdays[0].date(), tdays[-1].date())]:
         m = (sec.index >= pd.Timestamp(a)) & (sec.index <= pd.Timestamp(b))

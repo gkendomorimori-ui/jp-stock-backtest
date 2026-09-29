@@ -60,8 +60,13 @@ def test_problems_are_detected() -> None:
     data.bars.loc[data.bars.index[3], "api_adj_close"] = 1.0  # API adjusted value disagrees
     data.topix = None
     f = by_check(check_quality(data, RULES, KNOWN))
-    assert f["large_moves"].level == "WARN"
+    # the +100% / -50% moves are also in the API's adjusted series -> source data, INFO
+    assert f["large_moves"].level == "INFO"
+    assert "confirmed_by_api_in_universe" in f["large_moves"].message
+    assert f["large_moves"].details["in_universe"][0]["symbol"] == "10010"
+    # API AdjC = 1.0 vs recomputed 1000: not explainable by rounding
     assert f["adjustment_vs_api"].level == "WARN"
+    assert "1 unexplained" in f["adjustment_vs_api"].message
     assert f["market_codes"].level == "WARN" and "0199" in f["market_codes"].message
     assert "1 symbols" in f["common_stock_rule"].message
     assert f["common_stock_rule"].details["unclassified"][0]["symbol"] == "25935"
@@ -76,3 +81,27 @@ def test_missing_day_and_topix_mismatch_are_errors() -> None:
     assert f["coverage"].level == "ERROR"
     assert f["bars_vs_master"].level == "ERROR"
     assert f["topix"].level == "ERROR"
+
+
+def test_rounding_differences_are_explained() -> None:
+    data = clean()
+    bars = data.bars  # type: ignore[attr-defined]
+    bars["api_adj_close"] = bars["api_adj_close"].astype(float)
+    bars.loc[bars.index[:5], "api_adj_close"] = bars.loc[bars.index[:5], "adj_close"] + 0.04
+    f = by_check(check_quality(data, RULES, KNOWN))  # type: ignore[arg-type]
+    assert f["adjustment_vs_api"].level == "INFO"
+    assert "5 are within 0.05 yen" in f["adjustment_vs_api"].message
+
+
+def test_move_where_api_disagrees_is_a_warning() -> None:
+    s = flat(N, 1000, 200_000)
+    for k in ("open", "high", "low", "close"):
+        s[k] = [1000.0] * 25 + [2500.0] * 5  # +150% jump on day 25 with no adj_factor
+    data = make_data(DAYS, {"10010": s, "20020": flat(N, 500, 400_000)})
+    b = data.bars
+    b.loc[(b["symbol"] == "10010") & (b["date"] >= pd.Timestamp(DAYS[25])), "api_adj_close"] = (
+        1000.0
+    )
+    f = by_check(check_quality(data, RULES, KNOWN))
+    assert f["large_moves"].level == "WARN"
+    assert "api_adjusted_disagrees" in f["large_moves"].message
