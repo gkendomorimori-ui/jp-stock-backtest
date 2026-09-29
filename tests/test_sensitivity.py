@@ -339,6 +339,11 @@ def test_run_sensitivity_and_analyze_scripts(
     for r in summary["runs"]:
         checks, _ = verify_run(runs / r["run"])
         assert [c.name for c in checks if not c.ok] == [], r["variant"]
+    assert summary["random_ranking_all_seeds"]["seeds_completed"] == 20
+    assert summary["not_completed_runs"] == []
+    assert list(summary["take_profit_first"].values())[0]["take_profit_first_exits"] >= 0
+    resum = _load("summarize_sensitivity")
+    assert resum.main([str(out)]) == 0
     # the pre-registered B list is fixed: seeds 0..19
     assert sens.RANDOM_SEEDS == tuple(range(20))
 
@@ -377,3 +382,17 @@ def test_run_sensitivity_refuses_when_development_is_not_open(
     monkeypatch.setattr(sens, "load_period_plan", lambda: plan)
     monkeypatch.setattr(sens, "load_processed", lambda _p: pytest.fail("data must not be loaded"))
     assert sens.main(["--analysis", "A"]) == 1
+
+
+def test_stop_while_planning_logs_every_signal() -> None:
+    """C needs the tick of each candidate at the signal close; unknown -> stop, still logged."""
+    a = stock(500)
+    b = stock(500, scale=["-"] * 3 + [None] * (N - 3))
+    r = run(
+        {"10010": a, "20020": b},
+        {(0, "10010"): 2.0, (3, "10010"): 3.0, (3, "20020"): 2.5},
+        params=PC,
+    )
+    assert r.status == "needs_review" and r.halted["date"] == pd.Timestamp(DAYS[3])
+    assert r.stats["signals"] == len(r.orders)
+    assert set(r.orders["status"]) >= {"not_placed_run_stopped"}

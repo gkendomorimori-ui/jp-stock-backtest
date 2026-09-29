@@ -308,6 +308,7 @@ class BacktestEngine:
         self.ranking: Ranking = ranking or VolumeRatioRanking()
         self.halted: dict[str, Any] | None = None
         self._md: MarketData | None = None
+        self._unplanned: list[PendingOrder] = []
         self.cash = 0.0
         self.positions: dict[str, Position] = {}
         self.pending: list[PendingOrder] = []
@@ -363,6 +364,11 @@ class BacktestEngine:
                 raise DataError(f"no master data for {day.date()}")
             if not self._before_open(md, day):
                 self.status = "needs_review"
+                self.halted = {
+                    "date": day,
+                    "reason": "; ".join(f"{r[1]} {r[2]}: {r[7]}" for r in self.unresolved),
+                }
+                self._log_unexecuted(day)
                 break
             try:
                 self._open_sells(md, day)
@@ -375,8 +381,18 @@ class BacktestEngine:
                 # previous close is kept as partial results (never a completed result)
                 self.status = "needs_review"
                 self.halted = {"date": day, "reason": str(h)}
+                self._log_unexecuted(day)
                 break
         return self._result()
+
+    def _log_unexecuted(self, day: pd.Timestamp) -> None:
+        """At a stop: every counted signal still gets exactly one orders.csv row."""
+        for order in sorted(self.pending, key=lambda o: o.rank):
+            self._log_order(order, day, "not_executed_run_stopped", 0, math.nan, math.nan)
+        self.pending = []
+        for order in self._unplanned:
+            self._log_order(order, None, "not_placed_run_stopped", 0, math.nan, math.nan)
+        self._unplanned = []
 
     # ------------------------------------------------------------------ steps
 
@@ -459,6 +475,7 @@ class BacktestEngine:
         opens, highs = _row(md["open"], day), _row(md["high"], day)
         c, lot = self.p.commission_rate, self.p.lot_size
         for order in sorted(self.pending, key=lambda o: o.rank):
+            self.pending.remove(order)  # logged below (a stop must not log it twice)
             status, qty, fill, base = "filled", 0, math.nan, math.nan
             o = _val(opens, order.symbol)
             if len(self.positions) >= self.p.max_positions:
@@ -633,8 +650,13 @@ class BacktestEngine:
         )
         c = self.p.commission_rate
         budget = self.p.max_position_pct * equity
+        self._unplanned = [
+            PendingOrder(sym, day, sc, rank, 0, budget)
+            for rank, (sym, sc) in enumerate(ranked, start=1)
+        ]
         for rank, (sym, sc) in enumerate(ranked, start=1):
             est = self._buy_fill(_val(closes, sym), day, sym) * (1 + c)
+            self._unplanned.pop(0)
             qty = self._round_lot(budget / est)
             order = PendingOrder(sym, day, sc, rank, qty, budget)
             order.rank_value = self.ranking.value(day, sym, sc)
@@ -769,6 +791,7 @@ class BacktestEngine:
         self.halted = None
         self._intraday_checked = set()
         self._blocked_today = set()
+        self._unplanned = []
 
     def _round_lot(self, shares: float) -> int:
         lot = self.p.lot_size

@@ -383,6 +383,14 @@ def test_stop_saves_partial_results_and_open_positions(tmp_path: Path) -> None:
     assert list(ev["event"]) == ["tick_class_unknown"]
     checks, _ = verify_run(out)
     assert [c.name for c in checks if not c.ok] == []
+    from src.evaluation.sensitivity import load_run, stop_info
+
+    info = stop_info(load_run(out))
+    assert info is not None and info["stopped"]["date"] == DAYS[25].isoformat()
+    assert (
+        info["last_valued_date"] == str(DAYS[24])
+        and info["events"][0]["event"] == "tick_class_unknown"
+    )
 
 
 def test_end_of_test_unsold_position_is_valued_not_sold(tmp_path: Path) -> None:

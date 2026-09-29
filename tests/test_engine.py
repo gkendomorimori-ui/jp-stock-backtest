@@ -315,6 +315,20 @@ def test_delisting_while_held_stops_the_run_without_settling() -> None:
     assert r.equity_curve["cash"].iloc[-1] == pytest.approx(1_000_000 - 100 * 1001 * 1.0005)
 
 
+def test_orders_pending_at_a_stop_are_logged() -> None:
+    """Every counted signal keeps exactly one orders.csv row when the run stops."""
+    s = entry_1000()
+    s["listed"] = [True] * 6 + [False] * (N - 6)
+    other = flat(N, 1000)
+    r = run({"10010": s, "20020": other}, {(0, "10010"): 2.0, (5, "20020"): 2.0})
+    assert r.status == "needs_review" and r.halted is not None
+    assert r.halted["date"] == pd.Timestamp(DAYS[6]) and "delisted" in r.halted["reason"]
+    assert r.stats["signals"] == len(r.orders) == 2
+    row = r.orders[r.orders["symbol"] == "20020"].iloc[0]
+    assert row["status"] == "not_executed_run_stopped"
+    assert row["exec_date"] == pd.Timestamp(DAYS[6])
+
+
 # ------------------------------------------------------------------ diagnostic columns
 
 

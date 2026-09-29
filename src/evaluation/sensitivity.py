@@ -43,6 +43,10 @@ def load_run(run_dir: Path) -> dict[str, Any]:
         "summary": json.loads((run_dir / "summary.json").read_text(encoding="utf-8")),
         "trades": pd.read_csv(run_dir / "trades.csv", dtype={"symbol": str}),
         "orders": pd.read_csv(run_dir / "orders.csv", dtype={"symbol": str}),
+        "last_valued_date": str(pd.read_csv(run_dir / "equity_curve.csv")["date"].iloc[-1]),
+        "events": pd.read_csv(run_dir / "unresolved_events.csv", dtype={"symbol": str})
+        if (run_dir / "unresolved_events.csv").exists()
+        else pd.DataFrame(),
     }
 
 
@@ -58,6 +62,7 @@ def run_row(run: dict[str, Any]) -> dict[str, Any]:
         "analysis": v.get("analysis"),
         "seed": v.get("seed"),
         "status": s["metadata"]["status"],
+        "last_valued_date": run["last_valued_date"],
     }
     row.update({k: s.get("metrics", {}).get(k) for k in METRIC_KEYS})
     row.update(
@@ -138,25 +143,73 @@ def describe(values: list[float]) -> dict[str, float | int | None]:
     }
 
 
+def stop_info(run: dict[str, Any]) -> dict[str, Any] | None:
+    """Why and when a run that did not complete stopped (None for completed runs)."""
+    s = run["summary"]
+    if s["metadata"]["status"] == "complete":
+        return None
+    eq = pd.read_csv(run["dir"] / "equity_curve.csv")
+    ev = run["events"]
+    return {
+        "run": run["dir"].name,
+        "variant": s.get("variant", {}).get("name"),
+        "status": s["metadata"]["status"],
+        "stopped": (s.get("pnl") or {}).get("halted"),
+        "last_valued_date": str(eq["date"].iloc[-1]) if len(eq) else None,
+        "simulated_days": len(eq),
+        "events": ev.to_dict("records") if len(ev) else [],
+        "open_positions": (s.get("pnl") or {}).get("open_positions"),
+        "realized_pnl": (s.get("pnl") or {}).get("realized_pnl"),
+        "unrealized_pnl": (s.get("pnl") or {}).get("unrealized_pnl"),
+    }
+
+
+def take_profit_first_details(run: dict[str, Any]) -> dict[str, Any]:
+    """Sensitivity A: where the take-profit-first rule decided the exit."""
+    t = run["trades"]
+    both = t["intraday_both_touched"].astype("boolean").fillna(False)
+    tp_first = t[(t["exit_reason"] == "take_profit") & both]
+    return {
+        "take_profit_first_exits": len(tp_first),
+        "on_entry_day": int((tp_first["holding_days"] == 1).sum()),
+        "pnl_sum": float(tp_first["pnl"].sum()),
+    }
+
+
 def summarize(base_dir: Path, variant_dirs: list[Path]) -> tuple[dict[str, Any], pd.DataFrame]:
-    """Summary dict and metrics table (base first, then variants in the given order)."""
+    """Summary dict and metrics table (base first, then variants in the given order).
+
+    Runs that did not complete (a stop such as a held security's delisting) are listed with
+    the reason and are NOT included in the statistics over the random seeds: their metrics
+    cover a shorter period and are not completed results.
+    """
     base = load_run(base_dir)
     runs = [load_run(d) for d in variant_dirs]
     table = pd.DataFrame([run_row(base)] + [run_row(r) for r in runs])
     comparisons = {r["dir"].name: compare_with_base(base, r) for r in runs}
-    random_rows = table[table["variant"].astype(str).str.startswith("B_random")]
-    random_stats = (
-        {
-            k: describe([float(v) if v is not None else math.nan for v in random_rows[k]])
-            for k in METRIC_KEYS + ("cancelled_no_slot", "not_placed_unaffordable", "filled")
+    stopped = [x for x in (stop_info(r) for r in [base, *runs]) if x is not None]
+    random_all = table[table["variant"].astype(str).str.startswith("B_random")]
+    random_rows = random_all[random_all["status"] == "complete"]
+    random_stats: dict[str, Any] | None = None
+    if len(random_all):
+        random_stats = {
+            "seeds_total": len(random_all),
+            "seeds_completed": len(random_rows),
+            "seeds_not_completed": [
+                int(x) for x in random_all.loc[random_all["status"] != "complete", "seed"]
+            ],
+            "statistics_over": "completed seeds only",
         }
-        if len(random_rows)
-        else None
-    )
-    if random_stats is not None:
+        random_stats.update(
+            {
+                k: describe([float(v) if v is not None else math.nan for v in random_rows[k]])
+                for k in METRIC_KEYS + ("cancelled_no_slot", "not_placed_unaffordable", "filled")
+            }
+        )
         random_stats["purchases_overlap_jaccard_vs_base"] = describe(
             [comparisons[n]["purchases_overlap_jaccard"] for n in random_rows["run"]]
         )
+    a_runs = [r for r in runs if r["summary"].get("variant", {}).get("analysis") == "A"]
     summary = {
         "note": NOTE,
         "base_run": base_dir.name,
@@ -167,5 +220,7 @@ def summarize(base_dir: Path, variant_dirs: list[Path]) -> tuple[dict[str, Any],
         "runs": table.to_dict("records"),
         "comparison_with_base": comparisons,
         "random_ranking_all_seeds": random_stats,
+        "not_completed_runs": stopped,
+        "take_profit_first": {r["dir"].name: take_profit_first_details(r) for r in a_runs},
     }
     return summary, table
