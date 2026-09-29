@@ -196,6 +196,10 @@ Backtest Engine
 - `calendar.parquet`：`date, hol_div, is_trading_day`（東証の営業日 = `hol_div` が 1 または 2）
 - `manifest.json`：期間、行数、分割・併合の件数、四本値の不整合件数など
 
+## 品質確認の記録
+
+- [2026-09-29 J-Quants Light プラン 5年分](data_quality/2026-09-29_jquants_light_5y.md)：エラー・警告 0件。API の調整後の値は0.1円単位に丸められている（差はすべて0.05円以内）
+
 ## データソース比較表
 
 | 観点 | J-Quants API V2（第一候補） | 候補B (TODO) |
