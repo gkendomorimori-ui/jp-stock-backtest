@@ -96,11 +96,14 @@ def data_condition(md: MarketData, window: int) -> pd.DataFrame:
     return ok
 
 
+def average_turnover(md: MarketData, window: int) -> pd.DataFrame:
+    """Mean turnover over T-window .. T-1 (fixed exchange days; NaN unless all are valid)."""
+    return md["turnover"].rolling(window, min_periods=window).mean().shift(1)
+
+
 def liquidity(md: MarketData, rules: UniverseRules) -> pd.DataFrame:
     """Mean turnover over T-window .. T-1 is at least ``min_avg_turnover``."""
-    w = rules.window_days
-    avg = md["turnover"].rolling(w, min_periods=w).mean().shift(1)
-    return avg >= rules.min_avg_turnover
+    return average_turnover(md, rules.window_days) >= rules.min_avg_turnover
 
 
 def eligibility(md: MarketData, rules: UniverseRules) -> pd.DataFrame:

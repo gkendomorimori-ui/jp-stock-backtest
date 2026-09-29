@@ -130,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             results_root=PROJECT_ROOT / "results" / "runs",
             notes=notes,
             execution_model=args.execution_model,
+            tick_exceptions_cfg=load_yaml("config/tick_exceptions.yaml"),
         )
     except (ValueError, DataError) as e:
         print(f"ERROR: {e}")
@@ -142,8 +143,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"simulated days: {len(result.equity_curve)}   trades: {len(result.trades)}")
     print(f"orders: {summary['stats'].get('orders', {})}")
+    if result.halted is not None:
+        print(f"STOPPED on {result.halted['date'].date()}: {result.halted['reason']}")
     if result.status != "complete":
         print("NEEDS REVIEW: see unresolved_events.csv -- results are not final")
+    pnl = summary["pnl"]
+    print(
+        f"realized PnL: {pnl['realized_pnl']:,.0f}   unrealized PnL: {pnl['unrealized_pnl']:,.0f}"
+        f"   open positions: {pnl['open_positions']}"
+    )
     print(f"saved: {out.relative_to(PROJECT_ROOT)}")
     return 0
 

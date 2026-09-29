@@ -120,13 +120,20 @@ def verify_run(run_dir: Path) -> tuple[list[Check], dict[str, Any]]:
 
     # --- orders vs trades
     filled = orders[orders["status"] == "filled"]
-    open_at_end = int(equity["positions"].iloc[-1]) if len(equity) else 0
+    op_path = run_dir / "open_positions.csv"
+    if "pnl" in summary:  # runs that save open_positions.csv (also correct after a stop)
+        open_at_end = len(pd.read_csv(op_path)) if op_path.exists() else 0
+    else:
+        open_at_end = int(equity["positions"].iloc[-1]) if len(equity) else 0
     add(
         "filled orders = closed trades + positions still open",
         len(filled) == len(trades) + open_at_end,
         f"filled {len(filled)}, trades {len(trades)}, open {open_at_end}",
     )
     dates = list(equity["date"])
+    halted = (summary.get("pnl") or {}).get("halted")
+    if halted is not None:  # the stop day was not valued but its open buys happened
+        dates.append(halted["date"])
     nxt = {d: dates[i + 1] for i, d in enumerate(dates[:-1])}
     late = filled[
         [nxt.get(s) != e for s, e in zip(filled["signal_date"], filled["exec_date"], strict=True)]
@@ -190,10 +197,18 @@ def verify_run(run_dir: Path) -> tuple[list[Check], dict[str, Any]]:
     if version is not None:
         s = float(execution["slippage_rate"])
         add("execution model version recorded", version in ("v1", "v2"), str(version))
-        add(
-            "exit price = base price after slippage",
-            ((trades["exit_price"] - trades["base_price"] * (1 - s)).abs() < 1e-6).all(),
-        )
+        slip_model = execution.get("slippage_model", "rate")
+        if slip_model == "rate":
+            add(
+                "exit price = base price after slippage",
+                ((trades["exit_price"] - trades["base_price"] * (1 - s)).abs() < 1e-6).all(),
+            )
+        else:
+            add(
+                "exit price <= base price x (1 - rate) (slippage at least the rate)",
+                (trades["exit_price"] <= trades["base_price"] * (1 - s) + 1e-6).all(),
+                str(slip_model),
+            )
         intra = trades[(trades["exit_phase"] == "intraday")]
         itp = intra[intra["exit_reason"] == "take_profit"]
         isl = intra[intra["exit_reason"] == "stop_loss"]
@@ -250,6 +265,47 @@ def verify_run(run_dir: Path) -> tuple[list[Check], dict[str, Any]]:
             int((orders["status"] == "cancelled_limit_up").sum())
             == stats.get("buy_unfilled_limit_up", 0),
         )
+
+    # --- sensitivity A: take-profit-first only where both levels were touched intraday
+    prio = execution.get("intraday_priority", "stop_loss")
+    if "exit_phase" in trades.columns and "trigger_phase" in trades.columns:
+        tp_both = trades[
+            (trades["exit_reason"] == "take_profit")
+            & trades["intraday_both_touched"].astype("boolean").fillna(False)
+        ]
+        add(
+            "take-profit exits with both levels touched only under take-profit priority",
+            prio == "take_profit" or tp_both.empty,
+            f"{len(tp_both)} ({prio})",
+        )
+        if prio == "take_profit":
+            add(
+                "take-profit-priority count matches summary",
+                len(tp_both) == stats.get("take_profit_priority_applied"),
+            )
+
+    # --- realized / unrealized
+    pnl = summary.get("pnl")
+    if pnl is not None:
+        add(
+            "realized PnL = sum of trade PnL",
+            abs(pnl["realized_pnl"] - float(trades["pnl"].sum())) < 1e-3,
+        )
+        op_file = run_dir / "open_positions.csv"
+        n_open = len(pd.read_csv(op_file)) if op_file.exists() else 0
+        add(
+            "open_positions.csv matches the summary",
+            n_open == pnl["open_positions"],
+            f"{n_open} open",
+        )
+        if pnl.get("halted") is None and len(equity):
+            d = abs(
+                float(execution["initial_capital"])
+                + pnl["realized_pnl"]
+                + pnl["unrealized_pnl"]
+                - equity["equity"].iloc[-1]
+            )
+            add("final equity = initial + realized + unrealized", d < 1e-3, f"diff {d:.6f}")
 
     # --- final equity
     if open_at_end == 0 and not needs_review and len(equity):

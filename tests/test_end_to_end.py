@@ -351,3 +351,66 @@ def test_compare_execution_models(tmp_path: Path) -> None:
     assert "NOT attributed" in summary["note"]
     with pytest.raises(ComparisonError):
         compare_models(dirs["v2"], dirs["v2"])
+
+
+def test_stop_saves_partial_results_and_open_positions(tmp_path: Path) -> None:
+    """A's ScaleCat is missing on the take-profit day -> the run stops there (needs review)."""
+    from src.evaluation.verify import verify_run
+
+    series = build_series()
+    series["10010"]["scale"] = ["-"] * 25 + [None] * (N - 25)
+    out, result = run_high_price_breakout(
+        make_data(DAYS, series),
+        load_yaml("config/backtest.yaml"),
+        load_yaml("config/universe.yaml"),
+        load_yaml("strategies/high_price_breakout.yaml"),
+        eval_start=DAYS[EVAL_START],
+        eval_end=DAYS[EVAL_END],
+        run_type="smoke_test",
+        results_root=tmp_path,
+    )
+    s = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert s["metadata"]["status"] == "needs_review" and s["metrics_final"] is False
+    assert s["pnl"]["halted"]["date"] == DAYS[25].isoformat()
+    assert any("STOPPED" in n for n in s["metadata"]["notes"])
+    op = pd.read_csv(out / "open_positions.csv", dtype={"symbol": str})
+    # A (bought day 23) is still held; B's buy on day 25 happened before the stop
+    assert set(op["symbol"]) == {"10010", "20020"}
+    assert s["pnl"]["realized_pnl"] == 0 and s["pnl"]["open_positions"] == 2
+    eq = pd.read_csv(out / "equity_curve.csv")
+    assert eq["date"].iloc[-1] == str(DAYS[24])
+    ev = pd.read_csv(out / "unresolved_events.csv")
+    assert list(ev["event"]) == ["tick_class_unknown"]
+    checks, _ = verify_run(out)
+    assert [c.name for c in checks if not c.ok] == []
+
+
+def test_end_of_test_unsold_position_is_valued_not_sold(tmp_path: Path) -> None:
+    """B opens and closes at the lower limit on the last day: realized vs unrealized."""
+    series = build_series()
+    b = series["20020"]
+    b["ll"] = ["0"] * N
+    b["ll"][EVAL_END] = "1"
+    # closes at the lower limit (close == low) but above the stop (480.23): no stop sale
+    bar(b, EVAL_END, 500, 500, 490, 490, 400_000)
+    out, result = run_high_price_breakout(
+        make_data(DAYS, series),
+        load_yaml("config/backtest.yaml"),
+        load_yaml("config/universe.yaml"),
+        load_yaml("strategies/high_price_breakout.yaml"),
+        eval_start=DAYS[EVAL_START],
+        eval_end=DAYS[EVAL_END],
+        run_type="smoke_test",
+        results_root=tmp_path,
+    )
+    s = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    op = pd.read_csv(out / "open_positions.csv", dtype={"symbol": str}).iloc[0]
+    assert op["symbol"] == "20020" and op["valuation_price"] == 490
+    assert op["valuation_price_date"] == str(DAYS[EVAL_END])
+    assert s["pnl"]["open_shares"] == op["quantity"]
+    assert s["pnl"]["unrealized_pnl"] == pytest.approx(op["quantity"] * 490 - op["entry_cost"])
+    assert s["metadata"]["status"] == "needs_review"  # left open: not a completed result
+    assert s["pnl"]["realized_pnl"] == pytest.approx(result.trades["pnl"].sum())
+    assert len(result.trades) == 1  # only A was sold; no fictitious sale of B
+    final = s["metrics"]["final_equity"]
+    assert final == pytest.approx(1_500_000 + s["pnl"]["realized_pnl"] + s["pnl"]["unrealized_pnl"])

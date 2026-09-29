@@ -1,0 +1,118 @@
+# Dated, per-stock changes of the tick-size table (TSE market news "○月○日以降の呼値の単位の
+# 取扱いについて"). This reproduces the exchange's rules; it is NOT a strategy setting.
+#
+# How it is applied (src/backtest/ticks.py):
+#   * Default: the fine table applies when the day's J-Quants ScaleCat is in the fine set of the
+#     regime in force (TOPIX100 before 2023-06-05, TOPIX500 from 2023-06-05).
+#   * An entry below overrides that from its effective date (inclusive) until the next entry
+#     for the same code, or until the end of the regime in which it took effect (a TOPIX100-era
+#     entry never applies from 2023-06-05, when every TOPIX500 stock got the fine table).
+#   * action: fine = the fine table newly applies; standard = the fine table no longer applies.
+#
+# Every entry was read on the jpx.co.jp notice page itself (2026-09-29).
+# Coverage: 2025-01 .. 2026-09 checked month by month in the JPX news archive. 2021-06 .. 2024-12
+# comes from searches: the October periodic replacements are all present, but individual
+# (TOB / delisting / listing) notices of that time may be missing. Unresolved: 8729 Sony
+# Financial Group (listed 2025-09-29) -- no notice found.
+# The 2023-06-05 extension to TOPIX Mid400 is the regime change itself (ticks.REGIMES), not an
+# entry here (https://www.jpx.co.jp/news/1030/20230526-01.html, 20230602-01.html).
+
+source_checked: 2026-09-29
+exceptions:
+  # --- TOPIX100 era -------------------------------------------------------------------------
+  - {code: "6502", action: fine, effective: 2021-10-29, notice: 2021-10-08, url: "https://www.jpx.co.jp/news/1030/20211008-01.html"}
+  - {code: "6586", action: fine, effective: 2021-10-29, notice: 2021-10-08, url: "https://www.jpx.co.jp/news/1030/20211008-01.html"}
+  - {code: "6645", action: fine, effective: 2021-10-29, notice: 2021-10-08, url: "https://www.jpx.co.jp/news/1030/20211008-01.html"}
+  - {code: "6920", action: fine, effective: 2021-10-29, notice: 2021-10-08, url: "https://www.jpx.co.jp/news/1030/20211008-01.html"}
+  - {code: "9502", action: standard, effective: 2021-10-29, notice: 2021-10-08, url: "https://www.jpx.co.jp/news/1030/20211008-01.html"}
+  - {code: "9503", action: standard, effective: 2021-10-29, notice: 2021-10-08, url: "https://www.jpx.co.jp/news/1030/20211008-01.html"}
+  - {code: "9531", action: standard, effective: 2021-10-29, notice: 2021-10-08, url: "https://www.jpx.co.jp/news/1030/20211008-01.html"}
+  - {code: "6723", action: fine, effective: 2022-10-31, notice: 2022-10-11, url: "https://www.jpx.co.jp/news/1030/20221011-01.html"}
+  - {code: "9101", action: fine, effective: 2022-10-31, notice: 2022-10-11, url: "https://www.jpx.co.jp/news/1030/20221011-01.html"}
+  - {code: "6586", action: standard, effective: 2022-10-31, notice: 2022-10-11, url: "https://www.jpx.co.jp/news/1030/20221011-01.html"}
+  - {code: "8601", action: standard, effective: 2022-10-31, notice: 2022-10-11, url: "https://www.jpx.co.jp/news/1030/20221011-01.html"}
+  # --- TOPIX500 era -------------------------------------------------------------------------
+  - {code: "2222", action: fine, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "3132", action: fine, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "3397", action: fine, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "4733", action: fine, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "6526", action: fine, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "6707", action: fine, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "6966", action: fine, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "7729", action: fine, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "7867", action: fine, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "8424", action: fine, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "2815", action: standard, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "3101", action: standard, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "4443", action: standard, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "4506", action: standard, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "4552", action: standard, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "4686", action: standard, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "7966", action: standard, effective: 2023-10-31, notice: 2023-10-12, url: "https://www.jpx.co.jp/news/1030/20231012-01.html"}
+  - {code: "6502", action: standard, effective: 2023-11-29, notice: 2023-11-27, url: "https://www.jpx.co.jp/news/1030/20231127-01.html"}
+  - {code: "4581", action: standard, effective: 2024-03-25, notice: 2024-03-21, url: "https://www.jpx.co.jp/news/1030/20240321-01.html"}
+  - {code: "2427", action: standard, effective: 2024-05-21, notice: 2024-05-17, url: "https://www.jpx.co.jp/news/1030/20240517-01.html"}
+  - {code: "4185", action: standard, effective: 2024-06-11, notice: 2024-06-07, url: "https://www.jpx.co.jp/news/1030/20240607-01.html"}
+  - {code: "1942", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "1969", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "2327", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "3048", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "4194", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "5344", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "5393", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "5838", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "6323", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "6525", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "6632", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "8020", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "8242", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "8341", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "9749", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "9759", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "9934", action: fine, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "3880", action: standard, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "4919", action: standard, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "6103", action: standard, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "6755", action: standard, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "6966", action: standard, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "7780", action: standard, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "7947", action: standard, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "9601", action: standard, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "9832", action: standard, effective: 2024-10-31, notice: 2024-10-11, url: "https://www.jpx.co.jp/news/1030/20241011-01.html"}
+  - {code: "9023", action: fine, effective: 2024-11-29, notice: 2024-11-22, url: "https://www.jpx.co.jp/news/1030/20241122-01.html"}
+  - {code: "4921", action: standard, effective: 2024-12-05, notice: 2024-12-03, url: "https://www.jpx.co.jp/news/1030/20241203-01.html"}
+  - {code: "7518", action: standard, effective: 2025-02-25, notice: 2025-02-20, url: "https://www.jpx.co.jp/news/1030/20250220-01.html"}
+  - {code: "5016", action: fine, effective: 2025-04-30, notice: 2025-04-22, url: "https://www.jpx.co.jp/news/1030/20250422-01.html"}
+  - {code: "9749", action: standard, effective: 2025-05-02, notice: 2025-04-30, url: "https://www.jpx.co.jp/news/1030/20250430-01.html"}
+  - {code: "6967", action: standard, effective: 2025-05-26, notice: 2025-05-22, url: "https://www.jpx.co.jp/news/1030/20250522-03.html"}
+  - {code: "9613", action: standard, effective: 2025-09-04, notice: 2025-09-02, url: "https://www.jpx.co.jp/news/1030/20250902-01.html"}
+  - {code: "1719", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "4506", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "4626", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "4680", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "6269", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "6368", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "6544", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "7003", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "7189", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "9069", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "9302", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "285A", action: fine, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "2175", action: standard, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "3765", action: standard, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "4483", action: standard, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "4521", action: standard, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "6395", action: standard, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "7205", action: standard, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "7730", action: standard, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "8273", action: standard, effective: 2025-10-31, notice: 2025-10-10, url: "https://www.jpx.co.jp/news/1030/20251010-01.html"}
+  - {code: "6594", action: standard, effective: 2025-11-04, notice: 2025-10-30, url: "https://www.jpx.co.jp/news/1030/20251030-01.html"}
+  - {code: "7732", action: standard, effective: 2025-11-17, notice: 2025-11-13, url: "https://www.jpx.co.jp/news/1030/20251113-01.html"}
+  - {code: "6028", action: standard, effective: 2025-11-27, notice: 2025-11-25, url: "https://www.jpx.co.jp/news/1030/20251125-01.html"}
+  - {code: "8303", action: fine, effective: 2026-01-30, notice: 2026-01-23, url: "https://www.jpx.co.jp/news/1030/20260123-01.html"}
+  - {code: "9719", action: standard, effective: 2026-02-16, notice: 2026-02-12, url: "https://www.jpx.co.jp/news/1030/20260212-01.html"}
+  - {code: "6406", action: standard, effective: 2026-02-27, notice: 2026-02-25, url: "https://www.jpx.co.jp/news/1030/20260225-01.html"}
+  - {code: "4530", action: standard, effective: 2026-04-23, notice: 2026-04-21, url: "https://www.jpx.co.jp/news/1030/20260421-01.html"}
+  - {code: "4088", action: standard, effective: 2026-05-12, notice: 2026-05-08, url: "https://www.jpx.co.jp/news/1030/20260508-01.html"}
+  - {code: "6201", action: standard, effective: 2026-05-18, notice: 2026-05-14, url: "https://www.jpx.co.jp/news/1030/20260514-01.html"}
+  - {code: "8283", action: standard, effective: 2026-07-22, notice: 2026-07-17, url: "https://www.jpx.co.jp/news/1030/20260717-02.html"}

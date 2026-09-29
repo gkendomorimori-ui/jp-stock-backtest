@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.backtest.periods import PeriodPlan  # noqa: E402
+from src.backtest.ticks import TickRules  # noqa: E402
 from src.data.processing import ProcessingError, load_processed  # noqa: E402
 from src.data.quality import check_quality  # noqa: E402
 from src.universe import UniverseRules  # noqa: E402
@@ -39,7 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     known = {m["code"] for group in uni["universe"]["markets"].values() for m in group}
     plan = PeriodPlan.from_config(load_yaml("config/backtest.yaml"))
     segments = [(s.name, s.start, s.end) for s in plan.segments if s.status != "warmup"]
-    findings = check_quality(data, rules, known, segments)
+    tick_rules = TickRules.from_config(load_yaml("config/tick_exceptions.yaml"))
+    findings = check_quality(data, rules, known, segments, tick_rules=tick_rules)
     for f in findings:
         print(f"[{f.level:<5}] {f.check}: {f.message}")
         if f.details:

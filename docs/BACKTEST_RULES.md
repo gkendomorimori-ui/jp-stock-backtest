@@ -83,7 +83,7 @@ Execution at Day T+1
 - `trades.csv` — 取引履歴
 - `equity_curve.csv` — 日次の資産推移
 
-を保存する。あわせて `orders.csv`（買い注文と約定・取消の結果）と `sell_unfilled.csv`（約定しなかった売りの試行。実行モデル v2）を保存する。`status = needs_review` の場合は `unresolved_events.csv` も保存する。`summary.json` には `execution_model_version`（v1 / v2。[docs/EXECUTION_MODEL.md](EXECUTION_MODEL.md)）を記録する。
+を保存する。あわせて `orders.csv`（買い注文と約定・取消の結果）と `sell_unfilled.csv`（約定しなかった売りの試行。実行モデル v2）を保存する。期間末や停止時に保有が残っていれば `open_positions.csv`（未決済の株数・評価額・評価価格とその日付・含み損益）も保存し、`summary.json` の `pnl` に実現損益と含み損益を分けて記録する。約定の判断に必要な情報（呼値の区分、`UL`/`LL`）が不明な場合は、その場で実行を止めて「要確認」とし、途中結果と理由を保存する（完了した成績としては扱わない）。`status = needs_review` の場合は `unresolved_events.csv` も保存する。`summary.json` には `execution_model_version`（v1 / v2。[docs/EXECUTION_MODEL.md](EXECUTION_MODEL.md)）を記録する。
 
 ### trades.csv（暫定カラム）
 
@@ -125,6 +125,7 @@ Execution at Day T+1
 | `not_placed_unaffordable` | 予算（総資産の20%）で100株を買えないため、発注しなかった |
 | `cancelled_no_slot` | T+1 の寄付で空き枠がなく取消 |
 | `cancelled_not_tradable` | T+1 に売買が成立しておらず取消 |
+| （列）`rank_value` | 順位付けに使った値（基準：出来高倍率、感度分析 B：平均売買代金または SHA-256 のキー） |
 | `cancelled_limit_up` | T+1 にストップ高で寄り付き（`UL = 1` かつ 始値 = 高値）、約定しないとみなして取消（v2。持ち越さない） |
 | `cancelled_insufficient_funds` | 減額しても0株になり取消 |
 | `filled` | 購入 |

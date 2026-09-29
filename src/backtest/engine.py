@@ -49,11 +49,17 @@ from typing import Any
 
 import pandas as pd
 
-from src.backtest.ticks import ceil_to_tick, floor_to_tick, tick_class, tick_size
+from src.backtest.ranking import Ranking, VolumeRatioRanking
+from src.backtest.ticks import TickRules, ceil_to_tick, floor_to_tick, tick_size
 from src.data.market_data import MarketData
 from src.evaluation.report import UNRESOLVED_EVENT_COLUMNS
 
 EXECUTION_MODEL_VERSIONS: tuple[str, ...] = ("v1", "v2")
+#: Which exit wins when both levels are touched intraday (base: stop loss; sensitivity A).
+INTRADAY_PRIORITIES: tuple[str, ...] = ("stop_loss", "take_profit")
+#: ``rate``: base price x slippage_rate (base). ``max_rate_tick``: max(base price x
+#: slippage_rate, one tick of that day / stock / price band) -- sensitivity C (v2 only).
+SLIPPAGE_MODELS: tuple[str, ...] = ("rate", "max_rate_tick")
 
 #: Columns of trades.csv.
 TRADE_COLUMNS: list[str] = [
@@ -118,6 +124,23 @@ ORDER_COLUMNS: list[str] = [
     "filled_quantity",
     "fill_price",
     "base_price",
+    "rank_value",
+]
+
+#: Columns of open_positions.csv (positions still held when the run ended or stopped).
+OPEN_POSITION_COLUMNS: list[str] = [
+    "symbol",
+    "quantity",
+    "entry_date",
+    "entry_price",
+    "entry_cost",
+    "valuation_price",
+    "valuation_price_date",
+    "market_value",
+    "unrealized_pnl",
+    "sell_request_reason",
+    "sell_request_date",
+    "last_unfilled_cause",
 ]
 
 #: Columns of sell_unfilled.csv (v2: one row per sell attempt that did not execute).
@@ -172,6 +195,10 @@ class DataError(Exception):
     """Market data required by the engine is missing."""
 
 
+class _HaltError(Exception):
+    """Stop the run here: an input needed for this execution cannot be determined."""
+
+
 @dataclass(frozen=True)
 class ExecutionParams:
     """All numbers the engine needs (from config/backtest.yaml and the strategy YAML)."""
@@ -186,11 +213,19 @@ class ExecutionParams:
     stop_loss_pct: float
     max_holding_days: int
     model_version: str
+    intraday_priority: str = "stop_loss"
+    slippage_model: str = "rate"
 
     def __post_init__(self) -> None:
-        """Reject unknown execution model versions."""
+        """Reject unknown versions / options and combinations that are not implemented."""
         if self.model_version not in EXECUTION_MODEL_VERSIONS:
             raise ValueError(f"unknown execution model version: {self.model_version!r}")
+        if self.intraday_priority not in INTRADAY_PRIORITIES:
+            raise ValueError(f"unknown intraday priority: {self.intraday_priority!r}")
+        if self.slippage_model not in SLIPPAGE_MODELS:
+            raise ValueError(f"unknown slippage model: {self.slippage_model!r}")
+        if self.slippage_model != "rate" and self.model_version != "v2":
+            raise ValueError("slippage model max_rate_tick needs execution model v2 (ticks)")
 
 
 @dataclass
@@ -235,6 +270,7 @@ class PendingOrder:
     rank: int
     quantity: int
     budget: float
+    rank_value: object = None
 
 
 @dataclass
@@ -250,15 +286,28 @@ class EngineResult:
     sell_unfilled: pd.DataFrame = field(
         default_factory=lambda: pd.DataFrame(columns=SELL_UNFILLED_COLUMNS)
     )
+    open_positions: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=OPEN_POSITION_COLUMNS)
+    )
+    halted: dict[str, Any] | None = None
 
 
 class BacktestEngine:
     """Run one strategy's signals through the execution model."""
 
-    def __init__(self, params: ExecutionParams) -> None:
-        """Store execution parameters."""
+    def __init__(
+        self,
+        params: ExecutionParams,
+        tick_rules: TickRules | None = None,
+        ranking: Ranking | None = None,
+    ) -> None:
+        """Store execution parameters, tick rules (dated JPX exceptions) and the ranking."""
         self.p = params
         self.v2 = params.model_version == "v2"
+        self.tick_rules = tick_rules or TickRules()
+        self.ranking: Ranking = ranking or VolumeRatioRanking()
+        self.halted: dict[str, Any] | None = None
+        self._md: MarketData | None = None
         self.cash = 0.0
         self.positions: dict[str, Position] = {}
         self.pending: list[PendingOrder] = []
@@ -304,6 +353,7 @@ class BacktestEngine:
                 "scripts/process_data.py"
             )
         self._reset()
+        self._md = md
         start_i, end_i = _loc(dates, eval_start), _loc(dates, eval_end)
         for i in range(start_i, end_i + 1):
             day = dates[i]
@@ -314,11 +364,18 @@ class BacktestEngine:
             if not self._before_open(md, day):
                 self.status = "needs_review"
                 break
-            self._open_sells(md, day)
-            self._open_buys(md, day, i)
-            self._intraday(md, day)
-            self._close(md, day, i, is_last=(i == end_i))
-            self._value_and_plan(md, day, scores, eligible, is_last=(i == end_i))
+            try:
+                self._open_sells(md, day)
+                self._open_buys(md, day, i)
+                self._intraday(md, day)
+                self._close(md, day, i, is_last=(i == end_i))
+                self._value_and_plan(md, day, scores, eligible, is_last=(i == end_i))
+            except _HaltError as h:
+                # stop HERE: the day is not completed and not valued; everything up to the
+                # previous close is kept as partial results (never a completed result)
+                self.status = "needs_review"
+                self.halted = {"date": day, "reason": str(h)}
+                break
         return self._result()
 
     # ------------------------------------------------------------------ steps
@@ -400,7 +457,7 @@ class BacktestEngine:
 
     def _open_buys(self, md: MarketData, day: pd.Timestamp, i: int) -> None:
         opens, highs = _row(md["open"], day), _row(md["high"], day)
-        s, c, lot = self.p.slippage_rate, self.p.commission_rate, self.p.lot_size
+        c, lot = self.p.commission_rate, self.p.lot_size
         for order in sorted(self.pending, key=lambda o: o.rank):
             status, qty, fill, base = "filled", 0, math.nan, math.nan
             o = _val(opens, order.symbol)
@@ -417,7 +474,7 @@ class BacktestEngine:
                 self.stats["buy_unfilled_limit_up"] += 1
             else:
                 base = o
-                fill = o * (1 + s)
+                fill = self._buy_fill(o, day, order.symbol)
                 limit = min(order.budget, self.cash)
                 qty = order.quantity
                 while qty > 0 and qty * fill * (1 + c) > limit + _EPS:
@@ -457,7 +514,11 @@ class BacktestEngine:
                 continue
             self._intraday_checked.add(pos.symbol)
             both = bool(lo <= pos.stop_loss and hi >= pos.take_profit)
-            if lo <= pos.stop_loss:
+            tp_first = both and self.p.intraday_priority == "take_profit"
+            if tp_first:
+                # sensitivity A: only when BOTH levels are touched intraday
+                self.stats["take_profit_priority_applied"] += 1
+            if lo <= pos.stop_loss and not tp_first:
                 pos.sell_request = SellRequest(
                     "stop_loss", day, self._i, "intraday", pos.stop_loss, both, both
                 )
@@ -471,7 +532,7 @@ class BacktestEngine:
                 self._sell(pos, day, base, phase="intraday", tick=(cls, tick))
             elif hi >= pos.take_profit:
                 pos.sell_request = SellRequest(
-                    "take_profit", day, self._i, "intraday", pos.take_profit, False, False
+                    "take_profit", day, self._i, "intraday", pos.take_profit, both, False
                 )
                 if not self.v2:
                     self._sell(pos, day, pos.take_profit, phase="intraday")
@@ -568,14 +629,15 @@ class BacktestEngine:
                 self._log_order(ignored, None, "ignored_already_held", 0, math.nan, math.nan)
         ranked = sorted(
             ((sym, sc) for sym, sc in candidates if sym not in self.positions),
-            key=lambda x: (-x[1], x[0]),
+            key=lambda x: self.ranking.sort_key(day, x[0], x[1]),
         )
-        s, c = self.p.slippage_rate, self.p.commission_rate
+        c = self.p.commission_rate
         budget = self.p.max_position_pct * equity
         for rank, (sym, sc) in enumerate(ranked, start=1):
-            est = _val(closes, sym) * (1 + s) * (1 + c)
+            est = self._buy_fill(_val(closes, sym), day, sym) * (1 + c)
             qty = self._round_lot(budget / est)
             order = PendingOrder(sym, day, sc, rank, qty, budget)
+            order.rank_value = self.ranking.value(day, sym, sc)
             if qty <= 0:
                 self._log_order(order, None, "not_placed_unaffordable", 0, math.nan, math.nan)
                 continue
@@ -595,51 +657,72 @@ class BacktestEngine:
     ) -> bool:
         """Flag == 1 and ``price`` equals the day's extreme (high for UL, low for LL).
 
-        A missing flag is NOT treated as 0: it is recorded as needing review and the
-        order is then treated as executable (no evidence of a lock).
+        A missing flag is NOT treated as 0 and NOT treated as "no limit": the run stops here
+        as needing review (the order is not executed).
         """
         flag = _val(_row(md[flag_field], day), symbol)
         if math.isnan(flag):
             self.stats["limit_flag_missing"] += 1
-            self._event_raw(
-                day,
-                symbol,
-                "limit_flag_missing",
-                quantity,
-                math.nan,
-                math.nan,
-                None,
-                f"{flag_field} is missing on a traded day; lock could not be judged "
-                "(treated as not locked)",
+            reason = (
+                f"{flag_field} is missing for {symbol} on {day.date()} where it decides "
+                "whether an order can execute -- run stopped"
             )
-            return False
+            self._event_raw(
+                day, symbol, "limit_flag_missing", quantity, math.nan, math.nan, None, reason
+            )
+            raise _HaltError(reason)
         return flag == 1.0 and not math.isnan(extreme) and _same(price, extreme)
+
+    def _classify(self, md: MarketData, day: pd.Timestamp, symbol: str) -> str | None:
+        assert md.scale_category is not None
+        return self.tick_rules.classify(day, symbol, _obj(_row(md.scale_category, day), symbol))
+
+    def _tick_class(self, day: pd.Timestamp, symbol: str, quantity: int) -> str:
+        """Tick table of ``symbol`` on ``day``; unknown -> the run stops as needing review."""
+        assert self._md is not None
+        cls = self._classify(self._md, day, symbol)
+        if cls is None:
+            self.stats["tick_class_unknown"] += 1
+            reason = (
+                f"tick table of {symbol} on {day.date()} cannot be determined (ScaleCat "
+                "missing / unknown or no implemented regime) -- run stopped"
+            )
+            self._event_raw(
+                day, symbol, "tick_class_unknown", quantity, math.nan, math.nan, None, reason
+            )
+            raise _HaltError(reason)
+        return cls
 
     def _tick_price(
         self, md: MarketData, day: pd.Timestamp, pos: Position, level: float, how: str
     ) -> tuple[float, str, float]:
-        """Round ``level`` to the tick grid of ``pos.symbol`` on ``day``.
-
-        Unknown class -> recorded as needing review; the level itself is used (v1 value).
-        """
-        assert md.scale_category is not None
-        cls = tick_class(day, _obj(_row(md.scale_category, day), pos.symbol))
-        if cls is None:
-            self.stats["tick_class_unknown"] += 1
-            self._event(
-                day,
-                pos,
-                "tick_class_unknown",
-                "scale category / tick regime unknown; level used without tick rounding",
-            )
-            return level, "unknown", math.nan
+        """Round ``level`` to the tick grid of ``pos.symbol`` on ``day``."""
+        cls = self._tick_class(day, pos.symbol, pos.quantity)
         price = ceil_to_tick(level, cls) if how == "ceil" else floor_to_tick(level, cls)
         return price, cls, tick_size(level, cls)
 
     def _tp_order_price(self, md: MarketData, day: pd.Timestamp, pos: Position) -> float:
-        assert md.scale_category is not None
-        cls = tick_class(day, _obj(_row(md.scale_category, day), pos.symbol))
+        """Logged limit price of a take profit filled at the open.
+
+        NaN if the class is unknown; the fill itself is the open and does not depend on it.
+        """
+        cls = self._classify(md, day, pos.symbol)
         return math.nan if cls is None else ceil_to_tick(pos.take_profit, cls)
+
+    def _slip_cost(self, base: float, day: pd.Timestamp, symbol: str, quantity: int) -> float:
+        """Per-share adverse cost of the slippage model ``max_rate_tick``."""
+        cls = self._tick_class(day, symbol, quantity)
+        return max(base * self.p.slippage_rate, tick_size(base, cls))
+
+    def _buy_fill(self, base: float, day: pd.Timestamp, symbol: str) -> float:
+        if self.p.slippage_model == "rate":
+            return base * (1 + self.p.slippage_rate)
+        return base + self._slip_cost(base, day, symbol, 0)
+
+    def _sell_fill(self, base: float, day: pd.Timestamp, pos: Position) -> float:
+        if self.p.slippage_model == "rate":
+            return base * (1 - self.p.slippage_rate)
+        return max(base - self._slip_cost(base, day, pos.symbol, pos.quantity), 0.0)
 
     def _unfilled(self, day: pd.Timestamp, pos: Position, phase: str, cause: str) -> None:
         req = pos.sell_request
@@ -681,7 +764,9 @@ class BacktestEngine:
             "buy_unfilled_limit_up": 0,
             "limit_flag_missing": 0,
             "tick_class_unknown": 0,
+            "take_profit_priority_applied": 0,
         }
+        self.halted = None
         self._intraday_checked = set()
         self._blocked_today = set()
 
@@ -706,7 +791,7 @@ class BacktestEngine:
     ) -> None:
         req = pos.sell_request
         assert req is not None
-        fill = base_price * (1 - self.p.slippage_rate)
+        fill = self._sell_fill(base_price, day, pos)
         gross = pos.quantity * fill
         commission = gross * self.p.commission_rate
         proceeds = gross - commission
@@ -798,6 +883,7 @@ class BacktestEngine:
                 qty,
                 fill,
                 base,
+                order.rank_value,
             ]
         )
 
@@ -821,6 +907,31 @@ class BacktestEngine:
         self.stats["sell_requests_open_at_end"] = sum(
             1 for p in self.positions.values() if p.sell_request is not None
         )
+        open_rows = []
+        for pos in sorted(self.positions.values(), key=lambda x: x.symbol):
+            req = pos.sell_request
+            value = pos.quantity * pos.last_close
+            open_rows.append(
+                [
+                    pos.symbol,
+                    pos.quantity,
+                    pos.entry_date,
+                    pos.entry_price,
+                    pos.entry_cost,
+                    pos.last_close,
+                    pos.last_close_date,
+                    value,
+                    value - pos.entry_cost,
+                    req.reason if req else "",
+                    req.trigger_date if req else None,
+                    req.last_unfilled_cause if req else "",
+                ]
+            )
+        if self.halted is not None:
+            self.stats["halted"] = {
+                "date": self.halted["date"].date().isoformat(),
+                "reason": self.halted["reason"],
+            }
         return EngineResult(
             trades=trades,
             equity_curve=pd.DataFrame(self.equity_rows, columns=EQUITY_COLUMNS),
@@ -829,4 +940,6 @@ class BacktestEngine:
             status=self.status,
             stats=self.stats,
             sell_unfilled=unfilled,
+            open_positions=pd.DataFrame(open_rows, columns=OPEN_POSITION_COLUMNS),
+            halted=self.halted,
         )

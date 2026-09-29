@@ -15,7 +15,15 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from src.backtest.ticks import FINE_TABLE, KNOWN_SCALE_CATEGORIES, REGIMES, STANDARD_TABLE
+from src.backtest.ticks import (
+    FINE_TABLE,
+    KNOWN_SCALE_CATEGORIES,
+    REGIMES,
+    STANDARD_TABLE,
+    TickException,
+    TickRules,
+    regime_for,
+)
 from src.data.market_data import MarketData
 from src.data.processing import LIMIT_FLAG_COLUMNS, ProcessedData
 from src.universe import UniverseRules, eligibility, security_eligible
@@ -43,6 +51,7 @@ def check_quality(
     known_markets: set[str],
     segments: list[tuple[str, date, date]] | None = None,
     jump_threshold: float = 0.5,
+    tick_rules: TickRules | None = None,
 ) -> list[Finding]:
     """Run every check. ``segments`` = (name, start, end) for per-segment coverage stats."""
     out: list[Finding] = []
@@ -358,12 +367,15 @@ def check_quality(
         )
 
     # 10-12. execution model v2 inputs ------------------------------------------------------
-    out.extend(execution_inputs_findings(bars, master, rules))
+    out.extend(execution_inputs_findings(bars, master, rules, tick_rules))
     return out
 
 
 def execution_inputs_findings(
-    bars: pd.DataFrame, master: pd.DataFrame, rules: UniverseRules
+    bars: pd.DataFrame,
+    master: pd.DataFrame,
+    rules: UniverseRules,
+    tick_rules: TickRules | None = None,
 ) -> list[Finding]:
     """UL/LL flags, ScaleCat and the point-in-time tick grid (execution model v2).
 
@@ -431,6 +443,42 @@ def execution_inputs_findings(
     )
 
     rows = traded.merge(target[["date", "symbol", "scale_category"]], on=["date", "symbol"])
+    # class from the day's ScaleCat, then the dated JPX exceptions on top
+    rows["scale_class"] = None
+    for regime in REGIMES:
+        in_r = (rows["date"] >= regime.start) & (rows["date"] <= regime.end)
+        known = rows["scale_category"].isin(KNOWN_SCALE_CATEGORIES)
+        fine_r = rows["scale_category"].isin(regime.fine_categories)
+        rows.loc[in_r & known & fine_r, "scale_class"] = "fine"
+        rows.loc[in_r & known & ~fine_r, "scale_class"] = "standard"
+    rows["tick_class"] = rows["scale_class"]
+    exc_rows: list[dict[str, Any]] = []
+    for e, mask in _exception_masks(rows, tick_rules):
+        rows.loc[mask, "tick_class"] = e.action
+        sub = rows[mask]
+        differ = sub[sub["scale_class"] != e.action]
+        exc_rows.append(
+            {
+                "symbol": e.symbol,
+                "action": e.action,
+                "effective": str(e.effective.date()),
+                "traded_rows_in_force": len(sub),
+                "rows_where_scalecat_differs": len(differ),
+                "first_differing_date": str(differ["date"].min().date()) if len(differ) else None,
+                "last_differing_date": str(differ["date"].max().date()) if len(differ) else None,
+            }
+        )
+    if tick_rules is not None:
+        n_differ = sum(r["rows_where_scalecat_differs"] for r in exc_rows)
+        out.append(
+            Finding(
+                "INFO",
+                "tick_exceptions",
+                f"{len(tick_rules.exceptions)} dated JPX exceptions; traded rows where the "
+                f"exception differs from the day's ScaleCat: {n_differ}",
+                {"exceptions_with_rows": [r for r in exc_rows if r["traded_rows_in_force"]]},
+            )
+        )
     grid: list[dict[str, Any]] = []
     examples: list[dict[str, Any]] = []
     total_off = 0
@@ -438,11 +486,11 @@ def execution_inputs_findings(
         r = rows[(rows["date"] >= regime.start) & (rows["date"] <= regime.end)]
         if r.empty:
             continue
-        cats_known = r["scale_category"].isin(KNOWN_SCALE_CATEGORIES)
-        fine = r["scale_category"].isin(regime.fine_categories)
+        fine = r["tick_class"] == "fine"
+        standard = r["tick_class"] == "standard"
         for cls, mask, table in (
             ("fine", fine, FINE_TABLE),
-            ("standard", cats_known & ~fine, STANDARD_TABLE),
+            ("standard", standard, STANDARD_TABLE),
         ):
             sub = r[mask]
             off = pd.Series(False, index=sub.index)
@@ -488,6 +536,30 @@ def execution_inputs_findings(
             {"by_regime_and_class": grid, "examples": examples[:20]},
         )
     )
+    return out
+
+
+def _exception_masks(
+    rows: pd.DataFrame, tick_rules: TickRules | None
+) -> list[tuple[TickException, pd.Series]]:
+    """Rows (date, symbol) where each dated exception is in force (same rule as TickRules)."""
+    if tick_rules is None:
+        return []
+    out = []
+    by_symbol: dict[str, list[TickException]] = {}
+    for e in tick_rules.exceptions:
+        by_symbol.setdefault(e.symbol, []).append(e)
+    for sym, items in by_symbol.items():
+        items = sorted(items, key=lambda x: x.effective)
+        sym_rows = rows["symbol"] == sym
+        for k, e in enumerate(items):
+            regime = regime_for(e.effective)
+            assert regime is not None
+            end = regime.end
+            if k + 1 < len(items):
+                end = min(end, items[k + 1].effective - pd.Timedelta(days=1))
+            mask = sym_rows & (rows["date"] >= e.effective) & (rows["date"] <= end)
+            out.append((e, mask))
     return out
 
 

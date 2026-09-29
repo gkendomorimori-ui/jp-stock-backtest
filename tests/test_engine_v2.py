@@ -173,15 +173,22 @@ def test_scale_category_is_point_in_time() -> None:
     assert t["tick_class"] == "fine" and t["base_price"] == pytest.approx(950.9)
 
 
-def test_unknown_scale_category_is_recorded_not_guessed() -> None:
+def test_unknown_scale_category_stops_the_run() -> None:
+    """Not guessed and not executed without a tick: the run stops as needing review."""
     s = stock(scale=[None] * N)
     bar(s, 2, 1000, 1110, 1000, 1000)
     r = run({"10010": s}, SIG)
-    t = only_trade(r)
-    assert t["tick_class"] == "unknown" and t["base_price"] == pytest.approx(1101.1)
+    assert r.trades.empty  # the take profit on day 2 was NOT executed
     assert r.status == "needs_review"
+    assert r.halted is not None and r.halted["date"] == pd.Timestamp(DAYS[2])
     assert list(r.unresolved_events["event"]) == ["tick_class_unknown"]
-    assert r.stats["tick_class_unknown"] == 1
+    assert r.stats["tick_class_unknown"] == 1 and "halted" in r.stats
+    # partial results up to the previous close are kept
+    assert r.equity_curve["date"].iloc[-1] == pd.Timestamp(DAYS[1])
+    op = r.open_positions.iloc[0]
+    assert (op["symbol"], op["quantity"]) == ("10010", 100)
+    assert op["valuation_price"] == 1000 and op["valuation_price_date"] == pd.Timestamp(DAYS[1])
+    assert op["unrealized_pnl"] == pytest.approx(100 * 1000 - op["entry_cost"])
 
 
 # ------------------------------------------------------------------ gaps at the open
@@ -329,14 +336,37 @@ def test_unfilled_on_the_last_day_needs_review() -> None:
 # ------------------------------------------------------------------ data handling
 
 
-def test_missing_limit_flag_is_not_treated_as_zero() -> None:
+def test_missing_limit_flag_stops_the_run() -> None:
+    """Neither 0 nor "no limit": the buy that needs the flag is not executed; run stops."""
     s = stock()
     s["ul"][1] = None  # buy day: the lock cannot be judged
-    s["ll"][5] = None  # no sell attempt that day: nothing to judge, nothing recorded
     r = run({"10010": s}, SIG)
-    assert r.orders.iloc[0]["status"] == "filled"
+    assert r.orders.empty and r.trades.empty
     assert list(r.unresolved_events["event"]) == ["limit_flag_missing"]
     assert r.status == "needs_review" and r.stats["limit_flag_missing"] == 1
+    assert r.halted is not None and r.halted["date"] == pd.Timestamp(DAYS[1])
+    assert len(r.equity_curve) == 1  # day 0 only
+
+
+def test_missing_flag_where_not_needed_is_ignored() -> None:
+    s = stock()
+    s["ll"][5] = None  # held, no sell attempt that day: nothing to judge
+    s["ul"][7] = None  # no buy order that day
+    r = run({"10010": s}, SIG)
+    assert r.status == "complete" and r.unresolved_events.empty
+
+
+def test_limit_down_open_alone_creates_no_sell_request() -> None:
+    """LL=1 and open == low only decide whether an EXISTING sell can execute."""
+    s = stock()
+    s["ll"][3] = "1"
+    bar(s, 3, 980, 1000, 980, 990)  # opened at the lower limit, but above the stop 950.95
+    r = run({"10010": s}, SIG)
+    t = only_trade(r)
+    assert t["exit_reason"] == "time_exit"  # held until the holding limit
+    assert r.sell_unfilled.empty and r.stats["sell_unfilled"] == {}
+    eq = r.equity_curve.set_index("date")
+    assert eq.loc[pd.Timestamp(DAYS[3]), "positions"] == 1
 
 
 def test_v2_refuses_data_without_limit_flags() -> None:

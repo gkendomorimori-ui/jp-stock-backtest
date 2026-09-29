@@ -157,3 +157,38 @@ def test_old_processed_data_is_an_error() -> None:
     bars = data.bars.drop(columns=["upper_limit", "lower_limit"])
     f = by_check(execution_inputs_findings(bars, data.master, RULES))
     assert f["execution_inputs"].level == "ERROR"
+
+
+def test_tick_exceptions_are_applied_and_reported() -> None:
+    from src.backtest.ticks import TickRules
+
+    days = weekdays(date(2023, 11, 20), 20)
+    k = days.index(date(2023, 11, 29))
+    s = flat(20, 999.5)  # a fine-table price (0.5 is on the 0.1 grid, not on the 1-yen grid)
+    for col in ("open", "high", "low", "close"):
+        s[col][k:] = [999.0] * (20 - k)  # integer prices once the fine table no longer applies
+    s["scale"] = "TOPIX Large70"
+    data = make_data(days, {"65020": s})
+    tr = TickRules.from_config(
+        {
+            "exceptions": [
+                {
+                    "code": "6502",
+                    "action": "standard",
+                    "effective": "2023-11-29",
+                    "notice": "2023-11-27",
+                    "url": "x",
+                }
+            ]
+        }
+    )
+    f = by_check(execution_inputs_findings(data.bars, data.master, RULES, tr))
+    assert f["tick_grid"].level == "INFO"
+    exc = f["tick_exceptions"].details["exceptions_with_rows"][0]
+    assert exc["rows_where_scalecat_differs"] == 20 - k
+    assert exc["first_differing_date"] == "2023-11-29"
+    # without the exception the grid check still passes (integers are on the fine grid)
+    assert (
+        by_check(execution_inputs_findings(data.bars, data.master, RULES))["tick_grid"].level
+        == "INFO"
+    )
