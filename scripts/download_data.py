@@ -36,23 +36,16 @@ from src.data.providers.jquants import (  # noqa: E402
     smoke_period,
     trading_days_from_calendar,
 )
+from src.data.providers.jquants import load_api_key as _load_api_key  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_ROOT = PROJECT_ROOT / "data" / "raw"
 SMOKE_PERIOD_FILE = RAW_ROOT / "jquants" / "smoke_period.json"
 
 
-def load_api_key() -> str:
-    """Read JQUANTS_API_KEY from the environment or the project's .env file."""
-    key = os.environ.get("JQUANTS_API_KEY", "").strip()
-    env_file = PROJECT_ROOT / ".env"
-    if not key and env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith("JQUANTS_API_KEY="):
-                key = line.split("=", 1)[1].strip().strip('"').strip("'")
-    if not key:
-        raise SystemExit("JQUANTS_API_KEY is not set (.env or environment variable)")
-    return key
+def load_api_key() -> str | None:
+    """API key, or None when an outbound proxy attaches it (see docs/CLOUD_SETUP.md)."""
+    return _load_api_key(PROJECT_ROOT)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

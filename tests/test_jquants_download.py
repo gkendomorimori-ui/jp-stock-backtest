@@ -268,3 +268,38 @@ def test_topix_range_download(tmp_path: Path) -> None:
     assert [r["C"] for r in read_raw(path)] == [1.0, 2.0]
     dl.download_topix(date(2021, 9, 29), date(2026, 9, 28))
     assert len(t.calls) == 2  # second call skipped (already complete)
+
+
+# ------------------------------------------------------------------ proxy mode (cloud)
+
+
+def test_proxy_mode_sends_no_key_header() -> None:
+    seen: list[dict[str, str]] = []
+
+    def transport(url: str, headers: dict[str, str], timeout: float) -> Response:
+        seen.append(dict(headers))
+        return ok([{"Date": "2026-06-01"}])
+
+    client = JQuantsClient(None, min_interval=0, transport=transport, log=lambda _m: None)
+    client.get_pages("/markets/calendar", P)
+    assert seen == [{}]
+
+
+def test_empty_key_is_still_an_error() -> None:
+    with pytest.raises(JQuantsError):
+        JQuantsClient("", transport=FakeTransport())
+
+
+def test_load_api_key_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.data.providers.jquants import PROXY_KEY_ENV, load_api_key
+
+    monkeypatch.delenv("JQUANTS_API_KEY", raising=False)
+    monkeypatch.delenv(PROXY_KEY_ENV, raising=False)
+    with pytest.raises(SystemExit, match=PROXY_KEY_ENV):
+        load_api_key(tmp_path)
+    monkeypatch.setenv(PROXY_KEY_ENV, "1")
+    assert load_api_key(tmp_path) is None  # the proxy attaches the key
+    (tmp_path / ".env").write_text("JQUANTS_API_KEY=abc\n", encoding="utf-8")
+    assert load_api_key(tmp_path) == "abc"  # a local key wins
+    monkeypatch.setenv("JQUANTS_API_KEY", "env-key")
+    assert load_api_key(tmp_path) == "env-key"

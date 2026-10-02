@@ -18,7 +18,6 @@ The report is printed and saved to data/raw/jquants/plan_range.json (git-ignored
 from __future__ import annotations
 
 import json
-import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -33,23 +32,16 @@ from src.data.providers.jquants import (  # noqa: E402
     JQuantsError,
     JQuantsHTTPError,
 )
+from src.data.providers.jquants import load_api_key as _load_api_key  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUT_FILE = PROJECT_ROOT / "data" / "raw" / "jquants" / "plan_range.json"
 TOPIX_PATH = "/indices/bars/daily/topix"
 
 
-def load_api_key() -> str:
-    """Read JQUANTS_API_KEY from the environment or the project's .env file."""
-    key = os.environ.get("JQUANTS_API_KEY", "").strip()
-    env_file = PROJECT_ROOT / ".env"
-    if not key and env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith("JQUANTS_API_KEY="):
-                key = line.split("=", 1)[1].strip().strip('"').strip("'")
-    if not key:
-        raise SystemExit("JQUANTS_API_KEY is not set (.env or environment variable)")
-    return key
+def load_api_key() -> str | None:
+    """API key, or None when an outbound proxy attaches it (see docs/CLOUD_SETUP.md)."""
+    return _load_api_key(PROJECT_ROOT)
 
 
 def rows(client: JQuantsClient, path: str, params: dict[str, str]) -> list[dict[str, Any]] | str:

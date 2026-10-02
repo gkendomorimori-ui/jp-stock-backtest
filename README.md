@@ -189,6 +189,10 @@ python scripts/compare_runs.py results/runs/<前回のrun_id>   # 最新の実�
 | `sell_unfilled.csv` | 約定しなかった売りの試行（ストップ安・売買不成立。実行モデル v2） |
 | `unresolved_events.csv` | 要確認の事象（上場廃止など）があった場合のみ |
 
+## クラウド（Claude Code）での実行とデータのバックアップ
+
+[docs/CLOUD_SETUP.md](docs/CLOUD_SETUP.md)。株データは git に入れない（J-Quants の規約）。Light プランの取得範囲は毎日前に進むため、**開発用期間の最初のデータはもう API から取れない**。PC の取得済みデータを `python scripts/pack_data.py` で zip にして、自分専用の保存場所に置く。
+
 ## 5年分のデータ（Light プラン）
 
 期間の分け方は [docs/EVALUATION_PLAN.md](docs/EVALUATION_PLAN.md) で確定済み（開発用 2021-10-27〜2024-04-02、最終評価用 2024-04-03〜2026-04-02 は**未閲覧・実行不可**）。

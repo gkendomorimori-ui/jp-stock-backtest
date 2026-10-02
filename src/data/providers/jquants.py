@@ -77,7 +77,7 @@ class JQuantsClient:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None,
         *,
         min_interval: float = 13.0,
         retry_wait: float = 65.0,
@@ -91,7 +91,10 @@ class JQuantsClient:
         """Configure the client.
 
         Args:
-            api_key: J-Quants API key (sent as ``x-api-key``).
+            api_key: J-Quants API key (sent as ``x-api-key``). ``None`` = proxy mode: the
+                request is sent without the key and an outbound proxy attaches it
+                (Claude Code cloud environments, "API credentials"; see
+                docs/CLOUD_SETUP.md). An empty string is an error.
             min_interval: Minimum seconds between requests (Free plan: 5 requests/minute).
             retry_wait: Seconds to wait before retrying 429 / 5xx / network errors
                 (a numeric ``Retry-After`` header takes precedence).
@@ -102,7 +105,7 @@ class JQuantsClient:
             clock: Injected monotonic clock.
             log: Progress/diagnostic output.
         """
-        if not api_key:
+        if api_key is not None and not api_key:
             raise JQuantsError("API key is empty")
         self._api_key = api_key
         self.min_interval = min_interval
@@ -138,7 +141,7 @@ class JQuantsClient:
 
     def _request_json(self, path: str, params: dict[str, str]) -> dict[str, Any]:
         url = f"{BASE_URL}{path}?{urllib.parse.urlencode(params)}"
-        headers = {"x-api-key": self._api_key}
+        headers = {} if self._api_key is None else {"x-api-key": self._api_key}
         last_error = ""
         for attempt in range(self.max_retries + 1):
             self._space()
@@ -413,3 +416,31 @@ def free_plan_calendar_window(today: date) -> tuple[date, date]:
     end = today - timedelta(weeks=12)
     start = end - timedelta(days=200)
     return start, end
+
+
+#: Set to 1 when an outbound proxy attaches the API key (the key is not in this process).
+PROXY_KEY_ENV = "JQUANTS_API_KEY_VIA_PROXY"
+
+
+def load_api_key(project_root: Path) -> str | None:
+    """API key from JQUANTS_API_KEY or ``<project_root>/.env``.
+
+    Returns None (proxy mode) when JQUANTS_API_KEY_VIA_PROXY=1 and no key is set here.
+
+    Raises:
+        SystemExit: If neither a key nor proxy mode is configured.
+    """
+    key = os.environ.get("JQUANTS_API_KEY", "").strip()
+    env_file = project_root / ".env"
+    if not key and env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith("JQUANTS_API_KEY="):
+                key = line.split("=", 1)[1].strip().strip('"').strip("'")
+    if key:
+        return key
+    if os.environ.get(PROXY_KEY_ENV, "").strip() == "1":
+        return None
+    raise SystemExit(
+        "JQUANTS_API_KEY is not set (.env or environment variable); in a Claude Code cloud "
+        f"environment with the key stored as an API credential, set {PROXY_KEY_ENV}=1"
+    )

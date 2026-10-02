@@ -1,6 +1,7 @@
 # --- Data (do not commit raw / processed market data) ---
 data/raw/*
 data/processed/*
+data/archive/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 

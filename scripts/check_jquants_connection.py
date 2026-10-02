@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 import urllib.error
@@ -40,6 +39,10 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.data.providers.jquants import load_api_key as _load_api_key  # noqa: E402
 
 BASE_URL = "https://api.jquants.com/v2"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -55,7 +58,7 @@ class Client:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None,
         min_interval: float,
         out_dir: Path,
         retry_wait: float = 65.0,
@@ -108,7 +111,8 @@ class Client:
         if wait > 0 and self.requests > 0:
             self._sleep(wait)
         url = f"{BASE_URL}{path}?{urllib.parse.urlencode(params)}"
-        req = urllib.request.Request(url, headers={"x-api-key": self.api_key})
+        headers = {} if self.api_key is None else {"x-api-key": self.api_key}
+        req = urllib.request.Request(url, headers=headers)
         self._last = time.monotonic()
         self.requests += 1
         with urllib.request.urlopen(req, timeout=60) as resp:
@@ -125,17 +129,9 @@ def _retry_after(error: urllib.error.HTTPError) -> float | None:
         return None
 
 
-def load_api_key() -> str:
-    """Read JQUANTS_API_KEY from the environment or the project's .env file."""
-    key = os.environ.get("JQUANTS_API_KEY", "").strip()
-    env_file = PROJECT_ROOT / ".env"
-    if not key and env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith("JQUANTS_API_KEY="):
-                key = line.split("=", 1)[1].strip().strip('"').strip("'")
-    if not key:
-        raise SystemExit("JQUANTS_API_KEY is not set (.env or environment variable)")
-    return key
+def load_api_key() -> str | None:
+    """API key, or None when an outbound proxy attaches it (see docs/CLOUD_SETUP.md)."""
+    return _load_api_key(PROJECT_ROOT)
 
 
 def classify(row: dict[str, Any]) -> str:
